@@ -1,6 +1,12 @@
 -- Habilitar extensión para UUIDs
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- Habilitar extensión para UUIDs y mapas (PostGIS)
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Enum types
+CREATE TYPE user_role AS ENUM ('cliente', 'negocio', 'repartidor');
+
 -- Enum types
 CREATE TYPE user_role AS ENUM ('cliente', 'negocio', 'repartidor');
 CREATE TYPE business_status AS ENUM ('activo', 'inactivo', 'fuera_de_servicio');
