@@ -5,6 +5,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuthStore } from '../store/authStore';
 import CartScreen from '../screens/client/CartScreen';
+import BusinessTabs from '../navigation/BusinessTabs';
 
 // Pantallas de Auth
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -90,6 +91,15 @@ export default function AppNavigator() {
             {profile?.role === 'repartidor' && (
               <Stack.Screen name="DriverHome" component={DriverScreen} />
             )}
+
+            {profile?.role === 'negocio' && (
+                <Stack.Screen 
+                    name="BusinessHome" 
+                    component={BusinessTabs} // Cambiamos la pantalla única por las pestañas
+                    options={{ headerShown: false }} 
+                />
+            )}
+
 
             {/* Error de Rol */}
             {!profile?.role && (
