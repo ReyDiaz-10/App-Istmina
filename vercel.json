@@ -1,7 +1,0 @@
-{
-  "version": 2,
-  "installCommand": "cd app && npm install --legacy-peer-deps",
-  "buildCommand": "cd app && npx expo export",
-  "outputDirectory": "app/dist"
-}
-
