@@ -262,6 +262,10 @@ const RegisterScreen = ({ navigation, route }) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
       style={[styles.container, { backgroundColor: colors.background }]}
     >
+      <View style={styles.topActions}>
+        <AnimatedButton variant="home" navigation={navigation} />
+        <AnimatedButton variant="back" navigation={navigation} />
+      </View>
       <ScrollView 
         contentContainerStyle={styles.scrollContainer} 
         showsVerticalScrollIndicator={false}
@@ -344,6 +348,12 @@ const styles = StyleSheet.create({
   container: { 
     flex: 1, 
     backgroundColor: '#F5F7FA' 
+  },
+  topActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
   },
   scrollContainer: { 
     flexGrow: 1, 

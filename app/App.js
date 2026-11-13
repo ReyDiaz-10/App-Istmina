@@ -22,6 +22,7 @@ import SupportTickets from './src/screens/client/SupportTickets';
 import AboutScreen from './src/screens/client/AboutScreen';
 import PrivacyScreen from './src/screens/client/PrivacyScreen';
 import AppSettingsScreen from './src/screens/client/AppSettingsScreen';
+import ClientProfileScreen from './src/screens/client/ClientProfileScreen';
 
 import { useAuthStore } from './src/store/authStore';
 import { supabase } from './src/api/supabaseClient';
@@ -53,8 +54,8 @@ export default function App() {
   const [initializing, setInitializing] = React.useState(true);
 
   useEffect(() => {
-    applyAppearancePreference(appearance);
-  }, [appearance]);
+    applyAppearancePreference(appearance === 'system' ? 'system' : mode);
+  }, [appearance, mode]);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -109,6 +110,7 @@ export default function App() {
           <Stack.Screen name="About" component={AboutScreen} />
           <Stack.Screen name="Privacy" component={PrivacyScreen} />
           <Stack.Screen name="Settings" component={AppSettingsScreen} />
+          <Stack.Screen name="Profile" component={ClientProfileScreen} />
           <Stack.Screen name="Login" component={LoginScreen} />
           <Stack.Screen name="Register" component={RegisterScreen} />
         </Stack.Navigator>

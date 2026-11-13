@@ -20,6 +20,7 @@ export default function AppSettingsScreen({ navigation }) {
     { value: 'en', label: t('settings.english'), detail: t('settings.englishDetail') },
   ];
   const appearanceOptions = [
+    { value: 'clock', label: t('settings.clock'), detail: t('settings.clockDetail') },
     { value: 'system', label: t('settings.system'), detail: t('settings.systemDetail') },
     { value: 'light', label: t('settings.light'), detail: t('settings.lightDetail') },
     { value: 'dark', label: t('settings.dark'), detail: t('settings.darkDetail') },

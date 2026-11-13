@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useColorScheme } from 'react-native';
 import { usePreferencesStore } from '../store/preferencesStore';
 
@@ -29,6 +30,34 @@ const PALETTES = {
 export function useAppTheme() {
   const systemScheme = useColorScheme();
   const appearance = usePreferencesStore((state) => state.appearance);
-  const mode = appearance === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : appearance;
+  const [clockTime, setClockTime] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (appearance !== 'clock') return undefined;
+
+    let timeout;
+    const updateAtNextBoundary = () => {
+      const now = new Date();
+      setClockTime(now.getTime());
+      const next = new Date(now);
+      if (now.getHours() < 6) {
+        next.setHours(6, 0, 0, 0);
+      } else if (now.getHours() < 18) {
+        next.setHours(18, 0, 0, 0);
+      } else {
+        next.setDate(next.getDate() + 1);
+        next.setHours(6, 0, 0, 0);
+      }
+      timeout = setTimeout(updateAtNextBoundary, next.getTime() - now.getTime() + 100);
+    };
+
+    updateAtNextBoundary();
+    return () => clearTimeout(timeout);
+  }, [appearance]);
+
+  const hour = new Date(clockTime).getHours();
+  const mode = appearance === 'clock'
+    ? hour >= 6 && hour < 18 ? 'light' : 'dark'
+    : appearance === 'system' ? (systemScheme === 'dark' ? 'dark' : 'light') : appearance;
   return { mode, colors: PALETTES[mode] };
 }

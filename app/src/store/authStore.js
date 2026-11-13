@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../api/supabaseClient';
 
-export const useAuthStore = create((set) => ({
+export const useAuthStore = create((set, get) => ({
   user: null,          
   profile: null,      
   loading: false,
@@ -26,6 +26,51 @@ export const useAuthStore = create((set) => ({
     } catch (error) {
       console.error('Error crítico cargando perfil:', error.message);
       set({ loading: false });
+    }
+  },
+
+  updateProfileDetails: async ({ fullName, username, phone }) => {
+    set({ loading: true });
+    try {
+      const userId = get().user?.id;
+      if (!userId) throw new Error('Debes iniciar sesión para editar tu perfil.');
+      const { data, error } = await supabase
+        .from('profiles')
+        .update({
+          full_name: fullName.trim(),
+          username: username.trim().toLowerCase(),
+          phone: phone.trim(),
+        })
+        .eq('id', userId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      set({ profile: data, loading: false });
+      return { success: true };
+    } catch (error) {
+      set({ loading: false });
+      return { success: false, error: error.message };
+    }
+  },
+
+  requestEmailChange: async (email) => {
+    set({ loading: true });
+    try {
+      const { data, error } = await supabase.auth.updateUser({
+        email: email.trim().toLowerCase(),
+      });
+      if (error) throw error;
+      if (!data.user) throw new Error('Supabase no devolvió el usuario actualizado.');
+      const confirmationRequired = data.user.email?.toLowerCase() !== email.trim().toLowerCase();
+      set({ user: confirmationRequired ? get().user : data.user, loading: false });
+      return {
+        success: true,
+        confirmationRequired,
+      };
+    } catch (error) {
+      set({ loading: false });
+      return { success: false, error: error.message };
     }
   },
 

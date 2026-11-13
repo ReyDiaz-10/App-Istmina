@@ -62,7 +62,7 @@ supabase link --project-ref TU_PROJECT_REF
 supabase db push
 ```
 
-Revisa el estado de la base antes de aplicar cambios. Las migraciones en `supabase/migrations/` definen los roles, estados, permisos, billetera, suscripciones, operaciones de pedidos, bandeja de soporte, perfiles pendientes de verificación y moderación del chat. `0006_role_onboarding_and_verification.sql` crea los datos asociados al registro y protege la aprobación; `0007_chat_moderation.sql` exige consentimiento para compartir números y agrega métricas del negocio; `0009_allow_superadmin_profile_role.sql` permite el rol SuperAdmin en instalaciones cuyo esquema valida los roles con una restricción `CHECK`; `0010_public_verified_business_lookup.sql` permite listar negocios aprobados sin conceder acceso público a los datos legales de verificación. No ejecutes una migración manualmente en producción sin revisar primero su impacto y contar con respaldo.
+Revisa el estado de la base antes de aplicar cambios. Las migraciones en `supabase/migrations/` definen los roles, estados, permisos, billetera, suscripciones, operaciones de pedidos, bandeja de soporte, perfiles pendientes de verificación y moderación del chat. `0006_role_onboarding_and_verification.sql` crea los datos asociados al registro y protege la aprobación; `0007_chat_moderation.sql` exige consentimiento para compartir números y agrega métricas del negocio; `0009_allow_superadmin_profile_role.sql` permite el rol SuperAdmin en instalaciones cuyo esquema valida los roles con una restricción `CHECK`; `0010_public_verified_business_lookup.sql` permite listar negocios aprobados sin conceder acceso público a los datos legales de verificación; `0011_customer_profile_username.sql` agrega el nombre de usuario único editable desde Mi perfil. No ejecutes una migración manualmente en producción sin revisar primero su impacto y contar con respaldo.
 
 La migración inicial declara cada tipo una sola vez para permitir crear un sandbox vacío. No vuelvas a editar ni reaplicar migraciones que ya estén registradas en un entorno compartido o de producción.
 
@@ -189,7 +189,9 @@ La pantalla de privacidad es un borrador funcional, no un documento aprobado. An
 
 Al lanzar una versión, actualiza `version` en `app/app.json` y `app/package.json`. La pantalla «Acerca de» lee la versión desde `app/app.json`.
 
-Las preferencias locales se guardan con AsyncStorage. El idioma inicial se define en `expo.extra.defaultLanguage` de `app/app.json`; actualmente están disponibles Español (Latinoamérica) y Español (Colombia). La apariencia admite modo día, noche y sistema.
+Las preferencias locales se guardan con AsyncStorage. El idioma inicial se define en `expo.extra.defaultLanguage` de `app/app.json`; actualmente están disponibles Español (Latinoamérica) y Español (Colombia). La apariencia automática usa modo claro entre las 06:00 y 17:59 y modo oscuro el resto del día; también se puede elegir modo día, noche o seguir el sistema.
+
+La pantalla **Mi perfil** permite editar nombre, nombre de usuario único y teléfono. Los cambios de correo se solicitan por separado y pueden requerir confirmación desde el nuevo correo, según la configuración de autenticación de Supabase. Aplica la migración `0011_customer_profile_username.sql` antes de publicar esta pantalla.
 
 Los iconos del marketplace se generan desde `app/scripts/generate-marketplace-icon.ps1`. El script crea recursos nuevos en `app/assets/images`; los iconos Expo anteriores se conservan.
 

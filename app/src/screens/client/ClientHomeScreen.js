@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
+import AnimatedButton from '../../components/AnimatedButton';
 import PromoCarousel from '../../components/PromoCarousel';
 import { useRoleTheme } from '../../hooks/useRoleTheme';
 import { useAuthStore } from '../../store/authStore';
@@ -34,10 +35,14 @@ const ClientHomeScreen = ({ navigation }) => {
   const theme = useRoleTheme();
   const { colors } = useAppTheme();
   const user = useAuthStore((state) => state.user);
+  const profile = useAuthStore((state) => state.profile);
   const signOut = useAuthStore((state) => state.signOut);
   const t = useTranslation();
   const language = usePreferencesStore((state) => state.language);
   const isEnglish = language === 'en';
+  const hour = new Date().getHours();
+  const greeting = t(hour < 12 ? 'home.goodMorning' : hour < 18 ? 'home.goodAfternoon' : 'home.goodEvening');
+  const displayName = (profile?.full_name || user?.user_metadata?.full_name || '').trim();
 
   useEffect(() => {
     const fetchBusinesses = async () => {
@@ -110,9 +115,30 @@ const ClientHomeScreen = ({ navigation }) => {
           <Text style={[styles.marketLabel, { color: theme.primary }]}>{t('home.market')}</Text>
         </View>
       </View>
+      {displayName ? (
+        <Text style={[styles.greeting, { color: colors.text }]}>{greeting}, {displayName}</Text>
+      ) : null}
+      {user && (
+        <AnimatedButton
+          title={t('home.profile')}
+          variant="secondary"
+          onPress={() => navigation.navigate('Profile')}
+          style={styles.loginCta}
+          buttonStyle={[styles.loginCtaSurface, { borderColor: theme.primary }]}
+          textStyle={{ color: theme.primary }}
+        />
+      )}
+      {!user && (
+        <AnimatedButton
+          title={t('home.login')}
+          onPress={handleSessionButton}
+          style={styles.loginCta}
+          buttonStyle={[styles.loginCtaSurface, { backgroundColor: theme.primary, borderColor: theme.primary }]}
+          textStyle={{ color: theme.onPrimary }}
+        />
+      )}
       <View style={styles.quickLinkRow}>
         {user && <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('home.orders')} style={styles.quickLink} onPress={() => navigation.navigate('ClientOrders')}><Text style={[styles.quickLinkText, { color: theme.primary }]}>{t('home.orders')}</Text></TouchableOpacity>}
-        {!user && <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('home.login')} style={styles.quickLink} onPress={handleSessionButton}><Text style={[styles.quickLinkText, { color: theme.primary }]}>{t('home.login')}</Text></TouchableOpacity>}
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('home.about')} style={styles.quickLink} onPress={() => navigation.navigate('About')}><Text style={[styles.quickLinkText, { color: theme.primary }]}>{t('home.about')}</Text></TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('home.settings')} style={styles.quickLink} onPress={() => navigation.navigate('Settings')}><Text style={[styles.quickLinkText, { color: theme.primary }]}>{t('home.settings')}</Text></TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('home.help')} style={styles.quickLink} onPress={() => navigation.navigate('Support', { context: 'general' })}><Text style={[styles.quickLinkText, { color: theme.primary }]}>{t('home.help')}</Text></TouchableOpacity>
@@ -212,6 +238,9 @@ const styles = StyleSheet.create({
   brandName: { fontSize: 25, fontWeight: '800' },
   brandSubtitle: { fontSize: 19, lineHeight: 24, fontWeight: '800', marginTop: 1 },
   marketLabel: { fontSize: 9, lineHeight: 13, fontWeight: '800', letterSpacing: 0.7, marginTop: 4 },
+  greeting: { marginHorizontal: 20, marginTop: 16, fontSize: 25, lineHeight: 32, fontWeight: '800' },
+  loginCta: { alignSelf: 'stretch', marginHorizontal: 20, marginTop: 14 },
+  loginCtaSurface: { width: '100%', minHeight: 48 },
   quickLinkRow: { flexDirection: 'row', justifyContent: 'space-evenly', paddingHorizontal: 14, marginTop: 6 },
   quickLink: { flex: 1, paddingVertical: 8, alignItems: 'center' },
   quickLinkText: { fontSize: 13, fontWeight: '700' },

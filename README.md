@@ -45,6 +45,7 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 ## ✨ Funcionalidades principales
 
 - **Navegación guest-first:** escaparate y negocios accesibles antes del login.
+- **Saludo y perfil de cliente:** saludo con el nombre elegido según la hora local y edición de nombre, usuario único, teléfono y correo (con confirmación de Supabase).
 - **Interfaz adaptada al perfil:** paletas de color para cliente, negocio y repartidor.
 - **Botones animados:** efecto de presión con variantes de navegación Atrás e Inicio.
 - **Promociones y catálogo:** carrusel de banners y listado de negocios/productos cargados desde Supabase.
@@ -60,12 +61,12 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 - **Centro de control SuperAdmin:** métricas agregadas de usuarios, pedidos, negocios y entregas; bandeja de soporte para revisar, responder y resolver solicitudes.
 - **Ayuda por perfil:** clientes, negocios, repartidores y administración pueden reportar problemas desde su flujo; los reportes pueden relacionarse con un pedido.
 - **Acerca de IstmiYa:** información de la app, versión, contacto y accesos a soporte y privacidad; el ingreso administrativo valida el rol en la sesión y en Supabase.
-- **Preferencias de la app:** idioma Español (Latinoamérica) predeterminado, opción regional de Español (Colombia), y apariencia día, noche o sincronizada con el sistema. Las preferencias se guardan en el dispositivo.
+- **Preferencias de la app:** idioma Español (Latinoamérica) predeterminado y apariencia automática por hora local (modo claro de 06:00 a 17:59, modo oscuro el resto del día), con opciones manuales y sincronización con el dispositivo.
 - **Identidad de marketplace:** icono de bolsa de compras con productos, y lema visible en el inicio.
 - **Privacidad:** se incluye un borrador de política accesible desde la app. Completa los datos del responsable y sométela a revisión legal antes de publicar.
 - **Perfiles de prueba:** script opcional que crea cuentas de demostración y genera contraseñas aleatorias localmente.
 
-> **Estado de integración:** el registro por rol, la revisión manual, el chat moderado, las llamadas y los paneles requieren aplicar las migraciones `0006` a `0010`. Las migraciones `0009` y `0010` habilitan SuperAdmin en esquemas con restricciones `CHECK` y permiten listar negocios aprobados sin exponer sus datos legales. Las llamadas requieren desplegar la función de tokens y configurar LiveKit; en móvil necesitan un development build (no Expo Go). Las notificaciones por correo requieren configurar Resend. Los pagos dependen de las Edge Functions y credenciales de Wompi. Consulta [INSTRUCCIONES.md](./INSTRUCCIONES.md) antes de habilitar estos flujos.
+> **Estado de integración:** el registro por rol, la revisión manual, el chat moderado, las llamadas y los paneles requieren aplicar las migraciones `0006` a `0011`. `0011_customer_profile_username.sql` agrega el nombre de usuario único usado por Mi perfil. Las migraciones `0009` y `0010` habilitan SuperAdmin en esquemas con restricciones `CHECK` y permiten listar negocios aprobados sin exponer sus datos legales. Las llamadas requieren desplegar la función de tokens y configurar LiveKit; en móvil necesitan un development build (no Expo Go). Las notificaciones por correo requieren configurar Resend. Los pagos dependen de las Edge Functions y credenciales de Wompi. Consulta [INSTRUCCIONES.md](./INSTRUCCIONES.md) antes de habilitar estos flujos.
 
 ## 🧰 Tecnologías
 

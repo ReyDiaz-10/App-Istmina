@@ -60,6 +60,9 @@ const LoginScreen = ({ navigation, route }) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={[styles.container, { backgroundColor: colors.background }]}
     >
+      <View style={styles.topActions}>
+        <AnimatedButton variant="home" navigation={navigation} />
+      </View>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.text }]}>IstmiYa</Text>
@@ -111,6 +114,7 @@ const LoginScreen = ({ navigation, route }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F7FA' },
+  topActions: { paddingHorizontal: 20, paddingTop: 12 },
   scrollContainer: { flexGrow: 1, justifyContent: 'center', padding: 20 },
   header: { alignItems: 'center', marginBottom: 40 },
   title: { fontSize: 42, fontWeight: 'bold', color: '#1A237E', letterSpacing: -1 },
