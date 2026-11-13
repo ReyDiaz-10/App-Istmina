@@ -4,26 +4,39 @@
     "slug": "istmiya",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "icon": "./assets/images/istmiya-marketplace-icon.png",
+    "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./assets/images/istmiya-adaptive-foreground.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#FFF4E2"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      }
+        "foregroundImage": "./assets/images/istmiya-adaptive-foreground.png",
+        "backgroundImage": "./assets/images/istmiya-adaptive-background.png"
+      },
+      "package": "com.reydiaz10.istmiya"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/images/istmiya-marketplace-icon.png"
     },
-    "platforms": ["ios", "android", "web"]
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "extra": {
+      "defaultLanguage": "es-419",
+      "eas": {
+        "projectId": "62acc73b-4cca-4893-a95e-22b8b64e7d19"
+      }
+    }
   }
 }

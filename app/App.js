@@ -1,48 +1,67 @@
 // app/App.js
 import React, { useEffect } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import AppNavigator from './src/navigation/AppNavigator';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-
-export default function App() {
-  return (
-    <NavigationContainer>
-      <AppNavigator />
-    </NavigationContainer>
-  );
-}
-
-// Importamos las pantallas de Auth
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
+import ClientHomeScreen from './src/screens/client/ClientHomeScreen';
+import StoreDetailScreen from './src/screens/client/StoreDetailScreen';
+import CartScreen from './src/screens/client/CartScreen';
+import ClientOrdersScreen from './src/screens/client/ClientOrdersScreen';
+import OrderChatScreen from './src/screens/client/OrderChatScreen';
+import BusinessTabs from './src/navigation/BusinessTabs';
+import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
+import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
+import SupportTickets from './src/screens/client/SupportTickets';
+import AboutScreen from './src/screens/client/AboutScreen';
+import PrivacyScreen from './src/screens/client/PrivacyScreen';
+import AppSettingsScreen from './src/screens/client/AppSettingsScreen';
 
-// Importamos el store de autenticación
 import { useAuthStore } from './src/store/authStore';
 import { supabase } from './src/api/supabaseClient';
+import { usePreferencesStore } from './src/store/preferencesStore';
+import { useAppTheme } from './src/hooks/useAppTheme';
+import { applyAppearancePreference } from './src/utils/appearance';
 
 const Stack = createStackNavigator();
 
-// Pantalla provisional para el Home (Aquí es donde llegarán los usuarios logueados)
-const HomeScreen = () => (
-  <View style={styles.center}>
-    <Text style={styles.text}>🚀 ¡Bienvenido a IstmiYa!</Text>
-    <Text>Aquí empezaremos a construir el Marketplace</Text>
-  </View>
-);
+const getInitialRoute = (user, profile) => {
+  if (!user) return 'ClientHome';
+
+  switch (profile?.role) {
+    case 'negocio':
+      return 'BusinessHome';
+    case 'repartidor':
+      return 'DriverHome';
+    case 'superadmin':
+      return 'AdminDashboard';
+    default:
+      return 'ClientHome';
+  }
+};
 
 export default function App() {
-  const { user, profile, loading, fetchProfile } = useAuthStore();
+  const { user, fetchProfile } = useAuthStore();
+  const appearance = usePreferencesStore((state) => state.appearance);
+  const { mode, colors } = useAppTheme();
   const [initializing, setInitializing] = React.useState(true);
 
-  // Efecto para verificar la sesión al abrir la app
+  useEffect(() => {
+    applyAppearancePreference(appearance);
+  }, [appearance]);
+
   useEffect(() => {
     const checkSession = async () => {
       try {
+        await usePreferencesStore.getState().hydrate();
+        const savedAppearance = usePreferencesStore.getState().appearance;
+        applyAppearancePreference(savedAppearance);
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
-          // Si hay sesión, cargamos el perfil (rol, nombre, etc.)
+          useAuthStore.setState({ user: session.user });
           await fetchProfile(session.user.id);
         }
       } catch (error) {
@@ -53,40 +72,46 @@ export default function App() {
     };
 
     checkSession();
-  }, []);
+  }, [fetchProfile]);
 
-  // Mientras la app verifica si hay sesión, mostramos un cargador
   if (initializing) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#1A237E" />
+      <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator 
-        screenOptions={{ 
-          headerShown: false, // Ocultamos el header para un diseño más limpio y moderno
-        }}
-      >
-        {user ? (
-          // --- FLUJO AUTENTICADO ---
-          // Si hay usuario, solo puede acceder a las pantallas principales
-          <Stack.Screen name="Home" component={HomeScreen} />
-        ) : (
-          // --- FLUJO NO AUTENTICADO ---
-          // Si no hay usuario, solo puede acceder a Login y Registro
-          <>
-            <Stack.Screen name="Login" component={LoginScreen} />
-            <Stack.Screen name="Register" component={RegisterScreen} />
-          </>
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SafeAreaProvider>
+      <NavigationContainer theme={{ ...(mode === 'dark' ? DarkTheme : DefaultTheme), colors: { ...(mode === 'dark' ? DarkTheme.colors : DefaultTheme.colors), primary: colors.primary, background: colors.background, card: colors.surface, text: colors.text, border: colors.border } }}>
+        <Stack.Navigator 
+          initialRouteName={getInitialRoute(user, useAuthStore.getState().profile)}
+          screenOptions={{ 
+            headerShown: false,
+          }}
+        >
+          <Stack.Screen name="ClientHome" component={ClientHomeScreen} />
+          <Stack.Screen name="StoreDetail" component={StoreDetailScreen} />
+          <Stack.Screen name="Cart" component={CartScreen} />
+          <Stack.Screen name="ClientOrders" component={ClientOrdersScreen} />
+          <Stack.Screen name="OrderChat" component={OrderChatScreen} />
+          <Stack.Screen name="BusinessHome" component={BusinessTabs} />
+          <Stack.Screen name="DriverHome" component={DriverHomeScreen} />
+          <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+          <Stack.Screen name="Support" component={SupportTickets} />
+          <Stack.Screen name="About" component={AboutScreen} />
+          <Stack.Screen name="Privacy" component={PrivacyScreen} />
+          <Stack.Screen name="Settings" component={AppSettingsScreen} />
+          <Stack.Screen name="Login" component={LoginScreen} />
+          <Stack.Screen name="Register" component={RegisterScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
+
+
 
 const styles = StyleSheet.create({
   center: { 
@@ -94,11 +119,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center', 
     alignItems: 'center', 
     backgroundColor: '#F5F7FA' 
-  },
-  text: { 
-    fontSize: 24, 
-    fontWeight: 'bold', 
-    color: '#1A237E', 
-    marginBottom: 10 
   },
 });

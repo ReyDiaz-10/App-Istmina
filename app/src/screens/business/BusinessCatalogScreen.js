@@ -2,9 +2,11 @@
 import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, Text, FlatList, TouchableOpacity, Alert } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
+import { useAppTheme } from '../../hooks/useAppTheme';
 import { useAuthStore } from '../../store/authStore';
 
 const BusinessCatalogScreen = () => {
+  const { colors } = useAppTheme();
   const { profile } = useAuthStore();
   const [products, setProducts] = useState([]);
 
@@ -33,7 +35,7 @@ const BusinessCatalogScreen = () => {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <FlatList 
         data={products}
         keyExtractor={(item) => item.id}

@@ -1,114 +1,187 @@
 // app/src/screens/client/CartScreen.js
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  AppState,
+  FlatList,
+  Linking,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useCartStore } from '../../store/cartStore';
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../api/supabaseClient';
+import AnimatedButton from '../../components/AnimatedButton';
+import { useRoleTheme } from '../../hooks/useRoleTheme';
+import { createOrder, createOrderPaymentLink } from '../../services/orders';
+import { useAppTheme } from '../../hooks/useAppTheme';
+import { usePreferencesStore } from '../../store/preferencesStore';
+import { formatCOP } from '../../utils/formatters';
 
-const PAYMENT_METHODS = ['Nequi', 'Daviplata', 'QR', 'Efectivo'];
-
-const CartScreen = () => {
+const CartScreen = ({ navigation }) => {
   const { items, getTotal, clearCart, updateQuantity, removeItem } = useCartStore();
   const { user } = useAuthStore();
-  const [paymentMethod, setPaymentMethod] = useState('Nequi');
+  const theme = useRoleTheme();
+  const { colors } = useAppTheme();
+  const locale = usePreferencesStore((state) => state.language);
   const [loading, setLoading] = useState(false);
+  const [pendingOrderId, setPendingOrderId] = useState(null);
+  const paymentChannel = useRef(null);
+  const completedOrder = useRef(null);
+
+  const openChatAfterPayment = useCallback((orderId) => {
+    if (completedOrder.current === orderId) return;
+    completedOrder.current = orderId;
+    clearCart();
+    navigation.replace('OrderChat', { orderId });
+  }, [clearCart, navigation]);
+
+  const checkPaymentStatus = useCallback(async (orderId) => {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('status')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error verificando el pago:', error.message);
+      return;
+    }
+    if (data?.status === 'pagado') openChatAfterPayment(orderId);
+  }, [openChatAfterPayment]);
+
+  const watchPayment = useCallback((orderId) => {
+    if (paymentChannel.current) {
+      supabase.removeChannel(paymentChannel.current);
+    }
+
+    paymentChannel.current = supabase
+      .channel(`order-payment:${orderId}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${orderId}` },
+        ({ new: order }) => {
+          if (order.status === 'pagado') openChatAfterPayment(orderId);
+        },
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`Realtime payment subscription failed: ${status}`);
+        }
+      });
+
+    checkPaymentStatus(orderId);
+  }, [checkPaymentStatus, openChatAfterPayment]);
+
+  useEffect(() => {
+    if (!pendingOrderId) return undefined;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkPaymentStatus(pendingOrderId);
+    });
+    return () => subscription.remove();
+  }, [checkPaymentStatus, pendingOrderId]);
+
+  useEffect(() => () => {
+    if (paymentChannel.current) supabase.removeChannel(paymentChannel.current);
+  }, []);
 
   const handleCheckout = async () => {
+    if (!user) {
+      navigation.navigate('Login', { returnTo: 'Cart' });
+      return;
+    }
+
     if (items.length === 0) return;
     setLoading(true);
 
     try {
-      // 1. Crear la orden en la tabla 'orders'
-      const { data: order, error: orderError } = await supabase
-        .from('orders')
-        .insert([
-          {
-            client_id: user.id,
-            business_id: items[0].businessId, // Asumimos un solo negocio por pedido
-            total_amount: getTotal(),
-            payment_method: paymentMethod.toLowerCase(),
-            status: 'pendiente',
-          },
-        ])
-        .select()
-        .single();
+      const orderId = pendingOrderId || await createOrder({
+        businessId: items[0].businessId,
+        items,
+      });
+      setPendingOrderId(orderId);
+      watchPayment(orderId);
 
-      if (orderError) throw orderError;
-
-      // 2. Insertar los productos en 'order_items'
-      const orderItems = items.map(item => ({
-        order_id: order.id,
-        product_id: item.id,
-        quantity: item.quantity,
-        unit_price: item.price,
-      }));
-
-      const { error: itemsError } = await supabase.from('order_items').insert(orderItems);
-      if (itemsError) throw itemsError;
-
-      Alert.alert('¡Pedido Enviado!', 'El negocio recibirá tu pedido y confirmará el pago.');
-      clearCart();
-      // Aquí navegaríamos a una pantalla de "Mis Pedidos"
+      const paymentUrl = await createOrderPaymentLink(orderId);
+      await Linking.openURL(paymentUrl);
+      Alert.alert(
+        'Pago pendiente',
+        'Cuando Wompi confirme el pago, se abrirá el chat con el negocio.',
+      );
     } catch (error) {
-      Alert.alert('Error', error.message);
+      Alert.alert('No se pudo iniciar el pago', error.message);
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Mi Carrito</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View style={styles.header}>
+        <AnimatedButton variant="back" navigation={navigation} />
+        <Text style={[styles.title, { color: colors.text }]}>Mi Carrito</Text>
+        <AnimatedButton variant="home" navigation={navigation} />
+      </View>
       
       <FlatList 
         data={items} 
         keyExtractor={(item) => item.id} 
         renderItem={({ item }) => (
-          <View style={styles.itemCard}>
+          <View style={[styles.itemCard, { backgroundColor: colors.surface }]}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.itemName}>{item.name}</Text>
+              <Text style={[styles.itemName, { color: colors.text }]}>{item.name}</Text>
               <Text style={styles.itemPrice}>${item.price}</Text>
             </View>
             <View style={styles.quantityControls}>
-              <TouchableOpacity onPress={() => updateQuantity(item.id, -1)} style={styles.qtyBtn}>
-                <Text style={styles.qtyText}>-</Text>
-              </TouchableOpacity>
+              <AnimatedButton
+                title="-"
+                accessibilityLabel={`Disminuir cantidad de ${item.name}`}
+                onPress={() => updateQuantity(item.id, -1)}
+                buttonStyle={styles.qtyBtn}
+                textStyle={styles.qtyText}
+              />
               <Text style={styles.qtyNumber}>{item.quantity}</Text>
-              <TouchableOpacity onPress={() => updateQuantity(item.id, 1)} style={styles.qtyBtn}>
-                <Text style={styles.qtyText}>+</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => removeItem(item.id)} style={styles.removeBtn}>
-                <Text style={styles.removeText}>🗑️</Text>
-              </TouchableOpacity>
+              <AnimatedButton
+                title="+"
+                accessibilityLabel={`Aumentar cantidad de ${item.name}`}
+                onPress={() => updateQuantity(item.id, 1)}
+                buttonStyle={styles.qtyBtn}
+                textStyle={styles.qtyText}
+              />
+              <AnimatedButton
+                title="Quitar"
+                accessibilityLabel={`Quitar ${item.name} del carrito`}
+                onPress={() => removeItem(item.id)}
+                variant="secondary"
+                style={styles.removeBtn}
+                buttonStyle={styles.removeSurface}
+                textStyle={styles.removeText}
+              />
             </View>
           </View>
         )}
         ListEmptyComponent={<Text style={styles.emptyText}>Tu carrito está vacío</Text>}
       />
 
-      <View style={styles.footer}>
-        <Text style={styles.totalLabel}>Total: <Text style={styles.totalAmount}>${getTotal()}</Text></Text>
-        
-        <Text style={styles.paymentLabel}>Método de Pago:</Text>
-        <View style={styles.paymentGrid}>
-          {PAYMENT_METHODS.map(method => (
-            <TouchableOpacity 
-              key={method} 
-              style={[styles.paymentBtn, paymentMethod === method && styles.paymentBtnActive]} 
-              onPress={() => setPaymentMethod(method)}
-            >
-              <Text style={[styles.paymentBtnText, paymentMethod === method && styles.paymentBtnTextActive]}>{method}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+      <View style={[styles.footer, { backgroundColor: colors.surface }]}>
+        <Text style={[styles.totalLabel, { color: colors.text }]}>Total: <Text style={styles.totalAmount}>{formatCOP(getTotal(), locale)}</Text></Text>
+        <Text style={[styles.paymentLabel, { color: colors.muted }]}>Pago seguro en línea con Wompi</Text>
 
-        <TouchableOpacity 
-          style={[styles.checkoutBtn, loading && styles.btnDisabled]} 
-          onPress={handleCheckout} 
-          disabled={loading || items.length === 0}
-        >
-          {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.checkoutText}>Confirmar Pedido</Text>}
-        </TouchableOpacity>
+        <AnimatedButton
+          title={loading
+            ? 'Procesando...'
+            : user
+              ? pendingOrderId ? 'Reintentar pago con Wompi' : 'Pagar con Wompi'
+              : 'Iniciar sesión para pedir'}
+          onPress={handleCheckout}
+          disabled={loading || (Boolean(user) && items.length === 0)}
+          style={styles.checkoutBtn}
+          buttonStyle={styles.checkoutSurface}
+          textStyle={styles.checkoutText}
+        />
+        {loading && <ActivityIndicator color={theme.onPrimary} style={styles.checkoutLoader} />}
       </View>
     </View>
   );
@@ -116,7 +189,8 @@ const CartScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F7FA', padding: 20 },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#1A237E', marginBottom: 20, marginTop: 10 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+  title: { fontSize: 24, fontWeight: 'bold', color: '#1A237E' },
   itemCard: { 
     backgroundColor: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, 
     flexDirection: 'row', alignItems: 'center', elevation: 2 
@@ -124,26 +198,20 @@ const styles = StyleSheet.create({
   itemName: { fontSize: 16, fontWeight: 'bold', color: '#333' },
   itemPrice: { fontSize: 14, color: '#2E7D32', fontWeight: '600' },
   quantityControls: { flexDirection: 'row', alignItems: 'center' },
-  qtyBtn: { backgroundColor: '#E0E0E0', width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
+  qtyBtn: { backgroundColor: '#E0E0E0', width: 36, height: 36, minHeight: 36, padding: 0, borderRadius: 18 },
   qtyText: { fontSize: 18, fontWeight: 'bold' },
   qtyNumber: { marginHorizontal: 10, fontSize: 16, fontWeight: 'bold' },
-  removeBtn: { marginLeft: 15 },
-  removeText: { fontSize: 18 },
+  removeBtn: { marginLeft: 8 },
+  removeSurface: { borderWidth: 0, paddingHorizontal: 8, minHeight: 36 },
+  removeText: { fontSize: 12 },
   footer: { backgroundColor: '#fff', padding: 20, borderRadius: 20, elevation: 5, marginTop: 20 },
   totalLabel: { fontSize: 20, fontWeight: 'bold', textAlign: 'right', marginBottom: 15 },
   totalAmount: { color: '#2E7D32' },
   paymentLabel: { fontSize: 16, fontWeight: 'bold', color: '#555', marginBottom: 10 },
-  paymentGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginBottom: 20 },
-  paymentBtn: { 
-    backgroundColor: '#F5F7FA', padding: 10, borderRadius: 8, 
-    borderWidth: 1, borderColor: '#E0E0E0', width: '48%', marginBottom: 10, alignItems: 'center' 
-  },
-  paymentBtnActive: { backgroundColor: '#1A237E', borderColor: '#1A237E' },
-  paymentBtnText: { color: '#757575', fontSize: 13, fontWeight: '600' },
-  paymentBtnTextActive: { color: '#fff' },
-  checkoutBtn: { backgroundColor: '#1A237E', padding: 18, borderRadius: 12, alignItems: 'center' },
-  btnDisabled: { backgroundColor: '#9FA8DA' },
+  checkoutBtn: { alignSelf: 'stretch' },
+  checkoutSurface: { width: '100%', padding: 18 },
   checkoutText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  checkoutLoader: { position: 'absolute', right: 36, bottom: 35 },
   emptyText: { textAlign: 'center', marginTop: 50, color: '#757575' },
 });
 

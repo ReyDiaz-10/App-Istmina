@@ -1,5 +1,6 @@
 // app/src/navigation/BusinessTabs.js
 import React from 'react';
+import { Text } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import BusinessHomeScreen from '../screens/business/BusinessHomeScreen';
 import BusinessOrdersScreen from '../screens/business/BusinessOrdersScreen';

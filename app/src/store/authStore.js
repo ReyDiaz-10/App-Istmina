@@ -13,12 +13,18 @@ export const useAuthStore = create((set) => ({
         .from('profiles')
         .select('*')
         .eq('id', userId)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
-      set({ profile: data, loading: false });
+      
+      if (!data) {
+        console.log("No se encontró perfil, el usuario debe completar su registro.");
+        set({ profile: null, loading: false });
+      } else {
+        set({ profile: data, loading: false });
+      }
     } catch (error) {
-      console.error('Error cargando perfil:', error.message);
+      console.error('Error crítico cargando perfil:', error.message);
       set({ loading: false });
     }
   },
