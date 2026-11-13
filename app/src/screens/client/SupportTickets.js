@@ -3,7 +3,6 @@ import React, { useEffect, useState } from 'react';
 import { StyleSheet, View, Text, TextInput, TouchableOpacity, Alert, ScrollView, ActivityIndicator } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
 import { useAuthStore } from '../../store/authStore';
-import PremiumButton from '../../components/PremiumButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import AnimatedButton from '../../components/AnimatedButton';
 
@@ -41,8 +40,7 @@ const SupportTickets = ({ route, navigation }) => {
 
     setLoading(true);
     try {
-      const { error } = await supabase.from('support_tickets').insert([
-        {
+      const { data: ticket, error } = await supabase.from('support_tickets').insert({
           requester_id: profile.id,
           subject: form.subject,
           message: form.message,
@@ -50,11 +48,21 @@ const SupportTickets = ({ route, navigation }) => {
           status: 'pendiente',
           order_id: route?.params?.orderId || null,
           context: context || null,
-        },
-      ]);
+        }).select('id').single();
 
       if (error) throw error;
-      Alert.alert('Enviado', 'Tu mensaje ha sido recibido. Te responderemos pronto.');
+      let confirmationTitle = 'Enviado';
+      let confirmationMessage = 'Tu mensaje ha sido recibido. Te responderemos pronto.';
+      if (form.type === 'queja') {
+        const { error: notificationError } = await supabase.functions.invoke('notify-business-complaint', {
+          body: { ticketId: ticket.id },
+        });
+        if (notificationError) {
+          confirmationTitle = 'Queja recibida';
+          confirmationMessage = `El caso quedó registrado, pero no se pudo enviar el correo de notificación: ${notificationError.message}`;
+        }
+      }
+      Alert.alert(confirmationTitle, confirmationMessage);
       setForm({ subject: '', message: '', type: context ? 'soporte' : 'sugerencia' });
       const { data: currentTickets } = await supabase.from('support_tickets').select('id, subject, category, status, admin_reply, created_at').eq('requester_id', profile.id).order('created_at', { ascending: false }).limit(20);
       setTickets(currentTickets || []);
@@ -105,10 +113,11 @@ const SupportTickets = ({ route, navigation }) => {
           ))}
         </View>
 
-        <PremiumButton 
-          title={loading ? "Enviando..." : "Enviar Reporte"} 
-          onPress={sendTicket} 
-          style={{ marginTop: 30 }}
+        <AnimatedButton
+          title={loading ? 'Enviando...' : 'Enviar reporte'}
+          onPress={sendTicket}
+          disabled={loading}
+          style={{ alignSelf: 'stretch', marginTop: 30 }}
         />
       </View>
       {profile?.id && <View style={styles.requests}>

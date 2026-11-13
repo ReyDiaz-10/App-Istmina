@@ -50,18 +50,38 @@ const getExistingUser = async (email) => {
 
 const ensureUser = async ({ email, name, role }) => {
   const password = randomBytes(24).toString('base64url');
+  const phone = `+5730000${randomBytes(3).toString('hex').slice(0, 6)}`;
+  const userMetadata = {
+    full_name: name,
+    role,
+    phone,
+    ...(role === 'negocio' && {
+      store_name: 'IstmiYa Demo',
+      legal_name: 'Negocio de Prueba S.A.S.',
+      registration_id_type: 'NIT',
+      registration_id: `900${randomBytes(3).toString('hex').slice(0, 6)}`,
+      address: 'Calle de Prueba 100, Istmina',
+      complaint_email: email,
+      slogan: 'Perfil de demostración',
+    }),
+    ...(role === 'repartidor' && {
+      vehicle_type: 'Moto',
+      plate_number: `DEMO-${randomBytes(2).toString('hex').toUpperCase()}`,
+      face_photo_attested: 'true',
+    }),
+  };
   const existing = await getExistingUser(email);
   const result = existing
     ? await supabase.auth.admin.updateUserById(existing.id, {
       password,
       email_confirm: true,
-      user_metadata: { full_name: name, role },
+      user_metadata: userMetadata,
     })
     : await supabase.auth.admin.createUser({
       email,
       password,
       email_confirm: true,
-      user_metadata: { full_name: name, role },
+      user_metadata: userMetadata,
     });
 
   throwIfError(result.error);
@@ -71,7 +91,7 @@ const ensureUser = async ({ email, name, role }) => {
   const { error: profileError } = await supabase.from('profiles').upsert({
     id: user.id,
     full_name: name,
-    phone: `+5730000${randomBytes(3).toString('hex').slice(0, 6)}`,
+    phone,
     role,
     status: 'activo',
   }, { onConflict: 'id' });
@@ -93,17 +113,35 @@ const ensureBusiness = async (profileId) => {
       store_name: 'IstmiYa Demo',
       address: 'Calle de Prueba 100, Istmina',
       prep_time_t: 20,
-      status: 'activo',
+      status: 'inactivo',
     }).eq('id', current.id).select('id').single()
     : await supabase.from('businesses').insert({
       profile_id: profileId,
       store_name: 'IstmiYa Demo',
       address: 'Calle de Prueba 100, Istmina',
       prep_time_t: 20,
-      status: 'activo',
+      status: 'inactivo',
     }).select('id').single();
   throwIfError(businessResult.error);
   const businessId = businessResult.data.id;
+
+  const { error: verificationError } = await supabase.from('business_verifications')
+    .upsert({
+      business_id: businessId,
+      legal_name: 'Negocio de Prueba S.A.S.',
+      registration_id_type: 'NIT',
+      registration_id: '900123456',
+      complaint_email: 'negocio.demo@example.com',
+      verification_status: 'aprobado',
+      reviewed_at: new Date().toISOString(),
+      review_note: 'Aprobación automática exclusiva para el entorno de pruebas.',
+    }, { onConflict: 'business_id' });
+  throwIfError(verificationError);
+
+  const { error: activateError } = await supabase.from('businesses')
+    .update({ status: 'activo' })
+    .eq('id', businessId);
+  throwIfError(activateError);
 
   const { data: wallet, error: walletFindError } = await supabase
     .from('wallets')
@@ -157,14 +195,32 @@ const ensureDriver = async (profileId) => {
       vehicle_type: 'Moto',
       plate_number: 'DEMO-001',
       is_available: true,
+      verification_status: 'aprobado',
     }).eq('id', driver.id)
     : await supabase.from('drivers').insert({
       profile_id: profileId,
       vehicle_type: 'Moto',
       plate_number: 'DEMO-001',
       is_available: true,
+      verification_status: 'aprobado',
     });
   throwIfError(result.error);
+
+  const { data: updatedDriver, error: updatedDriverError } = await supabase.from('drivers')
+    .select('id')
+    .eq('profile_id', profileId)
+    .single();
+  throwIfError(updatedDriverError);
+  const driverId = driver?.id || updatedDriver.id;
+  const { error: verificationError } = await supabase.from('driver_verifications')
+    .upsert({
+      driver_id: driverId,
+      face_photo_attested: true,
+      verification_status: 'aprobado',
+      reviewed_at: new Date().toISOString(),
+      review_note: 'Aprobación automática exclusiva para el entorno de pruebas.',
+    }, { onConflict: 'driver_id' });
+  throwIfError(verificationError);
 };
 
 const createdUsers = [];

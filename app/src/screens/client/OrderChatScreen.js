@@ -16,7 +16,7 @@ const OrderChatScreen = ({ route, navigation }) => {
         <AnimatedButton variant="home" navigation={navigation} />
       </View>
       {orderId ? (
-        <OrderChat orderId={orderId} />
+        <OrderChat orderId={orderId} navigation={navigation} />
       ) : (
         <Text style={[styles.error, { color: colors.muted }]}>No se encontró el pedido para abrir el chat.</Text>
       )}

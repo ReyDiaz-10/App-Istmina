@@ -29,9 +29,9 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 | Perfil | Qué puede hacer |
 | --- | --- |
 | **Cliente** | Explorar promociones y negocios, revisar productos, gestionar el carrito, pagar mediante Wompi, seguir pedidos y conversar con el negocio. |
-| **Negocio** | Administrar productos y pedidos, revisar su billetera y suscripción, aceptar pedidos y coordinar su preparación y entrega. |
-| **Repartidor** | Cambiar su disponibilidad, ver pedidos listos para recoger, aceptar una entrega y marcarla como completada. |
-| **SuperAdmin** | Consultar el panel administrativo y gestionar la moderación de cuentas. Su rol se asigna desde un proceso de servidor; no se puede seleccionar en el registro público. |
+| **Negocio** | Completar su información legal, registrar un correo para quejas, consultar métricas, gestionar productos y pedidos, y revisar su billetera o suscripción. Solo puede operar tras la aprobación de SuperAdmin. |
+| **Repartidor** | Registrar vehículo y placa, cargar fotos privadas para revisión y, después de la aprobación, conectarse, aceptar entregas y marcarlas como completadas. |
+| **SuperAdmin** | Consultar métricas, responder solicitudes y revisar/aprobar perfiles de negocios y repartidores. Su rol se asigna desde un proceso de servidor; no se puede seleccionar en el registro público. |
 
 ## 🧭 Cómo se usa
 
@@ -50,6 +50,11 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 - **Promociones y catálogo:** carrusel de banners y listado de negocios/productos cargados desde Supabase.
 - **Flujo de pedidos:** seguimiento visual de pago, preparación, pedido listo, trayecto y entrega.
 - **Chat por pedido:** mensajes de cliente y negocio sincronizados mediante Supabase Realtime una vez confirmado el pago.
+- **Llamadas de voz por pedido:** cliente y negocio pueden iniciar, responder o rechazar llamadas desde el chat; Supabase Realtime coordina la invitación y LiveKit transporta el audio.
+- **Compartir teléfono con consentimiento:** el servidor detecta números en el chat y solicita autorización explícita antes de enviarlos; los números autorizados aparecen como enlace telefónico.
+- **Verificación manual de perfiles:** la información legal del negocio y las fotos privadas del repartidor se revisan desde SuperAdmin antes de habilitar operación o conexión.
+- **Panel del negocio:** resumen de pedidos, ventas entregadas y quejas asociadas a sus pedidos.
+- **Notificación de quejas:** las quejas asociadas a un pedido se envían al correo registrado por el negocio cuando Resend está configurado.
 - **Herramientas para comercios:** billetera recargable o suscripción mensual. En el modelo de billetera se cobra una comisión del 10 % al aceptar un pedido; una suscripción vigente exime de esa comisión.
 - **Pagos Wompi:** creación de enlaces de pago y verificación del webhook en el servidor.
 - **Centro de control SuperAdmin:** métricas agregadas de usuarios, pedidos, negocios y entregas; bandeja de soporte para revisar, responder y resolver solicitudes.
@@ -60,7 +65,7 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 - **Privacidad:** se incluye un borrador de política accesible desde la app. Completa los datos del responsable y sométela a revisión legal antes de publicar.
 - **Perfiles de prueba:** script opcional que crea cuentas de demostración y genera contraseñas aleatorias localmente.
 
-> **Estado de integración:** los flujos que requieren transacciones, permisos y datos en tiempo real dependen de aplicar las migraciones de Supabase, desplegar las Edge Functions y configurar las credenciales de Wompi. Consulta [INSTRUCCIONES.md](./INSTRUCCIONES.md) antes de habilitarlos en un entorno real.
+> **Estado de integración:** el registro por rol, la revisión manual, el chat moderado, las llamadas y los paneles requieren aplicar las migraciones `0006` a `0008`. Las llamadas requieren desplegar la función de tokens y configurar LiveKit; en móvil necesitan un development build (no Expo Go). Las notificaciones por correo requieren configurar Resend. Los pagos dependen de las Edge Functions y credenciales de Wompi. Consulta [INSTRUCCIONES.md](./INSTRUCCIONES.md) antes de habilitar estos flujos.
 
 ## 🧰 Tecnologías
 
@@ -84,7 +89,7 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 │       └── api/               # Cliente de Supabase
 ├── supabase/
 │   ├── migrations/            # Esquema y reglas de negocio
-│   └── functions/             # Pagos y webhook de Wompi
+│   └── functions/             # Pagos, webhook y notificaciones
 ├── docs/                      # Documentación técnica
 ├── vercel.json                # Build y publicación web
 └── INSTRUCCIONES.md           # Configuración, ejecución y despliegue
@@ -105,6 +110,8 @@ npm.cmd run web
 
 - La llave `service_role` de Supabase y las llaves privadas/secretos de Wompi deben permanecer en el servidor.
 - El cliente móvil solo utiliza `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+- Las fotos del rostro y documentos del repartidor se guardan en buckets privados; el acceso se limita al propietario, SuperAdmin y participantes autorizados de una entrega activa. La foto del local es pública para mostrar el negocio.
+- Resend se invoca desde una Edge Function; nunca pongas su API key en la app.
 - No publiques archivos `.env`, `.env_test` ni credenciales de demostración.
 - Usa un proyecto de Supabase de pruebas para generar cuentas demo; el script reemplaza las contraseñas de las cuentas de prueba existentes.
 

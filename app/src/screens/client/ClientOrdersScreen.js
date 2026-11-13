@@ -18,6 +18,7 @@ import { useAppTheme } from '../../hooks/useAppTheme';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { formatCOP } from '../../utils/formatters';
 import { useTranslation } from '../../hooks/useTranslation';
+import { getProfilePhotoUrl } from '../../services/onboardingMedia';
 
 const CHAT_STATUSES = [
   'pagado',
@@ -58,14 +59,28 @@ const ClientOrdersScreen = ({ navigation }) => {
 
       if (error) throw error;
       const ordersWithDrivers = data || [];
-      const profileIds = [...new Set(ordersWithDrivers.map((order) => order.drivers?.profile_id).filter(Boolean))];
+      const profileIds = [...new Set(ordersWithDrivers
+        .filter((order) => order.status === 'en_camino')
+        .map((order) => order.drivers?.profile_id)
+        .filter(Boolean))];
       if (profileIds.length) {
         const { data: driverProfiles, error: profilesError } = await supabase
           .from('profiles')
           .select('id, full_name, avatar_url')
           .in('id', profileIds);
         if (profilesError) throw profilesError;
-        const profilesById = new Map((driverProfiles || []).map((driverProfile) => [driverProfile.id, driverProfile]));
+        const profilesById = new Map();
+        await Promise.all((driverProfiles || []).map(async (driverProfile) => {
+          let avatarUrl = null;
+          if (driverProfile.avatar_url) {
+            try {
+              avatarUrl = await getProfilePhotoUrl(driverProfile.avatar_url);
+            } catch (photoError) {
+              console.error('No se pudo cargar la foto del repartidor:', photoError.message);
+            }
+          }
+          profilesById.set(driverProfile.id, { ...driverProfile, avatar_url: avatarUrl });
+        }));
         setOrders(ordersWithDrivers.map((order) => ({
           ...order,
           drivers: order.drivers ? { ...order.drivers, profiles: profilesById.get(order.drivers.profile_id) || null } : null,

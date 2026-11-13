@@ -63,6 +63,11 @@ const DriverHomeScreen = ({ navigation }) => {
   };
 
   const toggleAvailability = async (value) => {
+    if (driverData?.verification_status !== 'aprobado') {
+      Alert.alert('Verificación pendiente', 'Tu perfil debe ser aprobado antes de conectarte.');
+      return;
+    }
+
     try {
       const status = value ? 'disponible' : 'offline';
       const { error } = await supabase
@@ -81,7 +86,7 @@ const DriverHomeScreen = ({ navigation }) => {
 
   const fetchAvailableOrders = async (driver = driverData) => {
     // Solo buscamos pedidos si el repartidor está disponible
-    if (!driver?.is_available) return;
+    if (!driver?.is_available || driver.verification_status !== 'aprobado') return;
 
     try {
       const { data, error } = await supabase
@@ -180,6 +185,7 @@ const DriverHomeScreen = ({ navigation }) => {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <HelpButton navigation={navigation} context="repartidor" orderId={activeOrder?.id} compact />
       <View style={styles.sessionActions}>
+        <AnimatedButton title="Mi perfil" variant="secondary" onPress={() => navigation.navigate('DriverProfile')} />
         <AnimatedButton title="Configuración" variant="secondary" onPress={() => navigation.navigate('Settings')} />
         <AnimatedButton title="Cerrar sesión" variant="secondary" onPress={handleSignOut} />
       </View>
@@ -188,16 +194,32 @@ const DriverHomeScreen = ({ navigation }) => {
         <View>
           <Text style={[styles.welcomeText, { color: colors.text }]}>Hola, Repartidor</Text>
           <Text style={[styles.statusText, { color: colors.muted }]}>
-            Estado: {driverData?.is_available ? '🟢 Disponible' : '🔴 Offline'}
+            Estado: {driverData?.verification_status !== 'aprobado'
+              ? 'Pendiente de aprobación'
+              : driverData?.is_available ? 'Disponible' : 'Offline'}
           </Text>
         </View>
         <Switch
-          value={driverData?.is_available}
+          value={driverData?.verification_status === 'aprobado' && driverData?.is_available}
           onValueChange={toggleAvailability}
+          disabled={driverData?.verification_status !== 'aprobado'}
           trackColor={{ false: '#767577', true: '#1A237E' }}
           thumbColor={'#fff'}
         />
       </View>
+
+      {driverData?.verification_status !== 'aprobado' && (
+        <View style={[styles.offlineBox, styles.pendingBox]}>
+          <Text style={styles.offlineText}>
+            Tu perfil está pendiente de revisión. Completa las fotos en “Mi perfil”; no podrás recibir pedidos hasta ser aprobado.
+          </Text>
+          <AnimatedButton
+            title="Completar perfil"
+            onPress={() => navigation.navigate('DriverProfile')}
+            style={styles.pendingAction}
+          />
+        </View>
+      )}
 
       {/* PANEL DE PEDIDO ACTIVO */}
       {activeOrder ? (
@@ -293,6 +315,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#E0E0E0', padding: 30, borderRadius: 15,
     alignItems: 'center', marginTop: 50
   },
+  pendingBox: { marginHorizontal: 20, marginTop: 20 },
+  pendingAction: { alignSelf: 'stretch', marginTop: 12 },
   offlineText: { textAlign: 'center', color: '#666', fontSize: 16 },
   emptyText: { textAlign: 'center', marginTop: 50, color: '#757575' },
 });

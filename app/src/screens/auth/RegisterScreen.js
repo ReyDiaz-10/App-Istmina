@@ -5,16 +5,19 @@ import {
   View, 
   Text, 
   TextInput, 
+  Image,
   ActivityIndicator, 
   Alert, 
   KeyboardAvoidingView, 
   Platform, 
   ScrollView 
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { useAuthStore } from '../../store/authStore';
 import AnimatedButton from '../../components/AnimatedButton';
 import { getRoleTheme } from '../../constants/roleTheme';
 import { useAppTheme } from '../../hooks/useAppTheme';
+import { uploadRegistrationMedia } from '../../services/onboardingMedia';
 
 const RegisterScreen = ({ navigation, route }) => {
   const [formData, setFormData] = useState({
@@ -23,16 +26,49 @@ const RegisterScreen = ({ navigation, route }) => {
     email: '',
     password: '',
     role: 'cliente',
+    storeName: '',
+    legalName: '',
+    registrationIdType: 'NIT',
+    registrationId: '',
+    address: '',
+    complaintEmail: '',
+    slogan: '',
+    vehicleType: '',
+    plateNumber: '',
   });
+  const [photos, setPhotos] = useState({ business: null, face: null, plate: null });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { signUp, loading } = useAuthStore();
   const { colors } = useAppTheme();
   const { returnTo, returnParams } = route.params || {};
+  const updateField = (field, value) => {
+    setFormData((current) => ({ ...current, [field]: value }));
+  };
+
+  const selectPhoto = async (target) => {
+    try {
+      const options = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.7,
+      };
+      const captureWithCamera = Platform.OS !== 'web' && target !== 'business';
+      const result = !captureWithCamera
+        ? await ImagePicker.launchImageLibraryAsync({ ...options, aspect: [4, 3] })
+        : await ImagePicker.launchCameraAsync({ ...options, aspect: [4, 3] });
+      if (!result.canceled && result.assets?.[0]?.uri) {
+        setPhotos((current) => ({ ...current, [target]: result.assets[0].uri }));
+      }
+    } catch (error) {
+      Alert.alert('No se pudo seleccionar la foto', error.message);
+    }
+  };
 
   const handleRegister = async () => {
     const { fullName, phone, email, password } = formData;
     
-    if (!fullName || !phone || !email || !password) {
+    if (![fullName, phone, email, password].every((value) => value.trim())) {
       Alert.alert('Campos Incompletos', 'Por favor, llena todos los campos.');
       return;
     }
@@ -42,35 +78,183 @@ const RegisterScreen = ({ navigation, route }) => {
       return;
     }
 
-    const result = await signUp(formData);
-    
-    if (result.success) {
-      Alert.alert('¡Éxito!', 'Cuenta creada correctamente.', [
-        {
+    if (formData.role === 'negocio') {
+      const businessFields = [
+        formData.storeName,
+        formData.legalName,
+        formData.registrationId,
+        formData.address,
+        formData.complaintEmail,
+      ];
+      if (!businessFields.every((value) => value.trim()) || !photos.business) {
+        Alert.alert('Datos del negocio incompletos', 'Completa los datos legales y selecciona una foto real del local.');
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.complaintEmail.trim())) {
+        Alert.alert('Correo inválido', 'Ingresa un correo válido para recibir quejas y solicitudes.');
+        return;
+      }
+    }
+
+    if (formData.role === 'repartidor') {
+      if (!formData.vehicleType.trim() || !formData.plateNumber.trim() || !photos.face || !photos.plate) {
+        Alert.alert('Datos del repartidor incompletos', 'Indica vehículo y placa, toma una foto de tu rostro y una foto de la placa.');
+        return;
+      }
+    }
+
+    setIsSubmitting(true);
+    try {
+      const result = await signUp(formData);
+      if (!result.success) {
+        Alert.alert('Error', result.error || 'Ocurrió un problema al crear la cuenta.');
+        return;
+      }
+
+      if (result.requiresEmailConfirmation) {
+        Alert.alert(
+          'Confirma tu correo',
+          'La cuenta se creó. Confirma el correo y luego inicia sesión para completar o revisar la verificación de tu perfil.',
+          [{ text: 'Ir a iniciar sesión', onPress: () => navigation.reset({ index: 0, routes: [{ name: 'Login' }] }) }],
+        );
+        return;
+      }
+
+      let photoWarning = '';
+      try {
+        await uploadRegistrationMedia({
+          userId: result.userId,
+          role: formData.role,
+          businessPhotoUri: photos.business,
+          driverPhotoUri: photos.face,
+          platePhotoUri: photos.plate,
+        });
+        await useAuthStore.getState().fetchProfile(result.userId);
+      } catch (error) {
+        photoWarning = `\n\nNo se pudieron cargar todas las fotos: ${error.message}. Podrás intentarlo de nuevo desde tu perfil.`;
+      }
+
+      const roleRoute = {
+        negocio: 'BusinessHome',
+        repartidor: 'DriverHome',
+      }[formData.role];
+      const allowedRoutes = ['Cart', 'StoreDetail'];
+      const destination = roleRoute
+        || (allowedRoutes.includes(returnTo) ? returnTo : 'ClientHome');
+      Alert.alert(
+        'Cuenta creada',
+        formData.role === 'cliente'
+          ? `Tu cuenta está lista.${photoWarning}`
+          : `Tu perfil quedó pendiente de revisión por el equipo de IstmiYa.${photoWarning}`,
+        [{
           text: 'Continuar',
-          onPress: () => {
-            const roleRoute = {
-              negocio: 'BusinessHome',
-              repartidor: 'DriverHome',
-              superadmin: 'AdminDashboard',
-            }[formData.role];
-            const allowedRoutes = ['Cart', 'StoreDetail'];
-            const destination = roleRoute
-              || (allowedRoutes.includes(returnTo) ? returnTo : 'ClientHome');
-            navigation.reset({
-              index: 0,
-              routes: [{ name: destination, params: roleRoute ? undefined : returnParams }],
-            });
-          },
-        }
-      ]);
-    } else {
-      Alert.alert('Error', result.error || 'Ocurrió un problema al crear la cuenta.');
+          onPress: () => navigation.reset({
+            index: 0,
+            routes: [{ name: destination, params: roleRoute ? undefined : returnParams }],
+          }),
+        }],
+      );
+    } catch (error) {
+      Alert.alert('Error', error.message || 'Ocurrió un problema al crear la cuenta.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const selectRole = (role) => {
-    setFormData({ ...formData, role });
+    updateField('role', role);
+  };
+
+  const renderInput = (label, field, placeholder, options = {}) => (
+    <View>
+      <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
+      <TextInput
+        style={[styles.input, { backgroundColor: colors.input, borderColor: colors.border, color: colors.text }]}
+        placeholder={placeholder}
+        placeholderTextColor={colors.muted}
+        value={formData[field]}
+        onChangeText={(value) => updateField(field, value)}
+        {...options}
+      />
+    </View>
+  );
+
+  const renderPhotoPicker = (label, target, cameraOnly = false) => (
+    <View style={styles.photoPicker}>
+      <Text style={[styles.label, { color: colors.text }]}>{label}</Text>
+      {photos[target] ? <Image source={{ uri: photos[target] }} style={styles.photoPreview} /> : null}
+      <AnimatedButton
+        title={photos[target]
+          ? 'Cambiar foto'
+          : cameraOnly && Platform.OS !== 'web'
+            ? 'Tomar foto'
+            : 'Seleccionar foto real'}
+        onPress={() => selectPhoto(target)}
+        variant="secondary"
+        style={styles.photoAction}
+      />
+    </View>
+  );
+
+  const isBusy = loading || isSubmitting;
+
+  const renderRoleFields = () => {
+    if (formData.role === 'negocio') {
+      return (
+        <View style={styles.roleFields}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Datos del negocio</Text>
+          {renderInput('Nombre comercial', 'storeName', 'Ej. Restaurante IstmiYa')}
+          {renderInput('Razón social', 'legalName', 'Nombre legal registrado')}
+          <Text style={[styles.label, { color: colors.text }]}>Tipo de identificación</Text>
+          <View style={styles.roleContainer}>
+            {['NIT', 'CC'].map((type) => (
+              <AnimatedButton
+                key={type}
+                title={type}
+                onPress={() => updateField('registrationIdType', type)}
+                variant="secondary"
+                style={styles.roleAction}
+                buttonStyle={[
+                  styles.roleButton,
+                  formData.registrationIdType === type && {
+                    backgroundColor: getRoleTheme(formData.role).primary,
+                    borderColor: getRoleTheme(formData.role).primary,
+                  },
+                ]}
+                textStyle={formData.registrationIdType === type && styles.roleTextActive}
+              />
+            ))}
+          </View>
+          {renderInput('Número de identificación', 'registrationId', 'NIT o cédula')}
+          {renderInput('Dirección del local', 'address', 'Dirección completa')}
+          {renderInput('Correo para quejas y solicitudes', 'complaintEmail', 'contacto@negocio.com', {
+            keyboardType: 'email-address',
+            autoCapitalize: 'none',
+          })}
+          {renderInput('Eslogan (opcional)', 'slogan', 'Una frase para tu negocio')}
+          {renderPhotoPicker('Foto real del local', 'business')}
+          <Text style={[styles.helperText, { color: colors.muted }]}>
+            El negocio permanecerá inactivo hasta que el equipo revise y apruebe los datos.
+          </Text>
+        </View>
+      );
+    }
+
+    if (formData.role === 'repartidor') {
+      return (
+        <View style={styles.roleFields}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Datos del repartidor</Text>
+          {renderInput('Tipo de vehículo', 'vehicleType', 'Ej. Motocicleta')}
+          {renderInput('Placa', 'plateNumber', 'Ej. ABC123', { autoCapitalize: 'characters' })}
+          {renderPhotoPicker('Foto actual del rostro (tomada con cámara)', 'face', true)}
+          {renderPhotoPicker('Foto de la placa (tomada con cámara)', 'plate', true)}
+          <Text style={[styles.helperText, { color: colors.muted }]}>
+            Toma fotos reales, nítidas y sin ocultar el rostro o la placa. Tu cuenta quedará pendiente de aprobación.
+          </Text>
+        </View>
+      );
+    }
+    return null;
   };
 
   return (
@@ -89,41 +273,13 @@ const RegisterScreen = ({ navigation, route }) => {
         </View>
 
         <View style={styles.form}>
-          <Text style={styles.label}>Nombre Completo</Text>
-          <TextInput 
-            style={[styles.input, { backgroundColor: colors.input, borderColor: colors.border, color: colors.text }]} 
-            placeholder="Ej. Juan Pérez" 
-            value={formData.fullName} 
-            onChangeText={(t) => setFormData({...formData, fullName: t})} 
-          />
-
-          <Text style={styles.label}>Teléfono</Text>
-          <TextInput 
-            style={[styles.input, { backgroundColor: colors.input, borderColor: colors.border, color: colors.text }]} 
-            placeholder="Ej. 3001234567" 
-            value={formData.phone} 
-            onChangeText={(t) => setFormData({...formData, phone: t})} 
-            keyboardType="phone-pad" 
-          />
-
-          <Text style={styles.label}>Correo electrónico</Text>
-          <TextInput 
-            style={[styles.input, { backgroundColor: colors.input, borderColor: colors.border, color: colors.text }]} 
-            placeholder="correo@ejemplo.com" 
-            value={formData.email} 
-            onChangeText={(t) => setFormData({...formData, email: t})} 
-            keyboardType="email-address" 
-            autoCapitalize="none" 
-          />
-
-          <Text style={styles.label}>Contraseña</Text>
-          <TextInput 
-            style={[styles.input, { backgroundColor: colors.input, borderColor: colors.border, color: colors.text }]} 
-            placeholder="Mínimo 6 caracteres" 
-            value={formData.password} 
-            onChangeText={(t) => setFormData({...formData, password: t})} 
-            secureTextEntry 
-          />
+          {renderInput('Nombre completo', 'fullName', 'Ej. Juan Pérez', { autoCapitalize: 'words' })}
+          {renderInput('Teléfono', 'phone', 'Ej. 3001234567', { keyboardType: 'phone-pad' })}
+          {renderInput('Correo electrónico', 'email', 'correo@ejemplo.com', {
+            keyboardType: 'email-address',
+            autoCapitalize: 'none',
+          })}
+          {renderInput('Contraseña', 'password', 'Mínimo 6 caracteres', { secureTextEntry: true })}
 
           <AnimatedButton
             title="Leer política de tratamiento de datos"
@@ -156,7 +312,9 @@ const RegisterScreen = ({ navigation, route }) => {
             ))}
           </View>
 
-          {loading ? (
+          {renderRoleFields()}
+
+          {isBusy ? (
             <ActivityIndicator color="#1A237E" style={styles.loadingIndicator} />
           ) : (
             <AnimatedButton
@@ -210,6 +368,8 @@ const styles = StyleSheet.create({
   form: { 
     width: '100%' 
   },
+  roleFields: { marginBottom: 10 },
+  sectionTitle: { fontSize: 18, fontWeight: '700', marginTop: 16 },
   label: { 
     fontSize: 14, 
     fontWeight: 'bold', 
@@ -225,6 +385,10 @@ const styles = StyleSheet.create({
     borderWidth: 1, 
     borderColor: '#E0E0E0' 
   },
+  helperText: { fontSize: 13, lineHeight: 18, marginTop: 8 },
+  photoPicker: { marginTop: 8 },
+  photoPreview: { width: '100%', height: 170, borderRadius: 12, marginBottom: 8 },
+  photoAction: { alignSelf: 'stretch' },
   roleContainer: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 

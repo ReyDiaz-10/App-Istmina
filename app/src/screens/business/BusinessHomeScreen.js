@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Linking,
   Modal,
   SafeAreaView,
@@ -13,15 +14,24 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../api/supabaseClient';
 import { useAuthStore } from '../../store/authStore';
 import AnimatedButton from '../../components/AnimatedButton';
 import WalletCard from '../../components/WalletCard';
 import { createBusinessPaymentLink } from '../../services/orders';
+import { uploadBusinessPhoto } from '../../services/onboardingMedia';
 import HelpButton from '../../components/HelpButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { formatCOP } from '../../utils/formatters';
+
+const Metric = ({ label, value, colors }) => (
+  <View style={[styles.metric, { backgroundColor: colors.background }]}>
+    <Text style={[styles.metricValue, { color: colors.primary }]}>{value}</Text>
+    <Text style={[styles.metricLabel, { color: colors.muted }]}>{label}</Text>
+  </View>
+);
 
 const BusinessHomeScreen = ({ navigation }) => {
   // Estados de Datos
@@ -33,8 +43,12 @@ const BusinessHomeScreen = ({ navigation }) => {
   const [products, setProducts] = useState([]);
   const [wallet, setWallet] = useState({ balance: 0 });
   const [subscription, setSubscription] = useState({ is_active: false });
+  const [verificationStatus, setVerificationStatus] = useState('pendiente');
+  const [verification, setVerification] = useState(null);
+  const [metrics, setMetrics] = useState({ orders: 0, active_orders: 0, completed_orders: 0, sales: 0, complaints: 0 });
   const [loading, setLoading] = useState(true);
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [uploadingBusinessPhoto, setUploadingBusinessPhoto] = useState(false);
 
   // Estados de Interfaz (UI)
   const [modalVisible, setModalVisible] = useState(false);
@@ -98,16 +112,26 @@ const BusinessHomeScreen = ({ navigation }) => {
       setBusiness(businessData);
 
       // 2. Carga concurrente de Billetera, Suscripción y Productos
-      const [walletRes, subRes, prodRes] = await Promise.all([
+      const [walletRes, subRes, prodRes, verificationRes, metricsRes] = await Promise.all([
         supabase.from('wallets').select('*').eq('business_id', businessData.id).single(),
         supabase.from('subscriptions').select('*').eq('business_id', businessData.id).maybeSingle(),
-        supabase.from('products').select('*').eq('business_id', businessData.id)
+        supabase.from('products').select('*').eq('business_id', businessData.id),
+        supabase.from('business_verifications')
+          .select('*')
+          .eq('business_id', businessData.id)
+          .single(),
+        supabase.rpc('business_dashboard_summary'),
       ]);
 
       if (walletRes.error) throw walletRes.error;
       if (prodRes.error) throw prodRes.error;
+      if (verificationRes.error) throw verificationRes.error;
+      if (metricsRes.error) throw metricsRes.error;
 
       setWallet({ balance: walletRes.data?.balance || 0 });
+      setVerificationStatus(verificationRes.data.verification_status);
+      setVerification(verificationRes.data);
+      setMetrics(metricsRes.data);
       const today = new Date().toISOString().slice(0, 10);
       setSubscription({
         is_active: Boolean(
@@ -126,6 +150,11 @@ const BusinessHomeScreen = ({ navigation }) => {
   };
 
   const updateBusinessStatus = async (newStatus) => {
+    if (newStatus === 'activo' && verificationStatus !== 'aprobado') {
+      Alert.alert('Verificación pendiente', 'El negocio debe ser aprobado por SuperAdmin antes de activarse.');
+      return;
+    }
+
     try {
       const { error } = await supabase
         .from('businesses')
@@ -184,6 +213,76 @@ const BusinessHomeScreen = ({ navigation }) => {
     }
   };
 
+  const handleBusinessPhoto = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 3],
+        quality: 0.7,
+      });
+      if (result.canceled || !result.assets?.[0]?.uri) return;
+
+      setUploadingBusinessPhoto(true);
+      const imageUrl = await uploadBusinessPhoto({ userId: profile.id, uri: result.assets[0].uri });
+      setBusiness((current) => ({ ...current, store_image_url: imageUrl }));
+      Alert.alert('Foto actualizada', 'La imagen real del local ya aparece en tu perfil.');
+    } catch (error) {
+      Alert.alert('No se pudo actualizar la foto', error.message);
+    } finally {
+      setUploadingBusinessPhoto(false);
+    }
+  };
+
+  const saveVerificationDetails = async () => {
+    try {
+      if (!verification?.legal_name?.trim()
+        || !verification?.registration_id?.trim()
+        || !verification?.complaint_email?.trim()) {
+        Alert.alert('Datos incompletos', 'Completa razón social, identificación y correo de contacto.');
+        return;
+      }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verification.complaint_email.trim())) {
+        Alert.alert('Correo inválido', 'Ingresa un correo válido para recibir quejas y solicitudes.');
+        return;
+      }
+
+      const { error } = await supabase.from('business_verifications')
+        .update({
+          legal_name: verification.legal_name.trim(),
+          registration_id_type: verification.registration_id_type,
+          registration_id: verification.registration_id.trim(),
+          complaint_email: verification.complaint_email.trim().toLowerCase(),
+          verification_status: 'pendiente',
+          review_note: null,
+          reviewed_by: null,
+          reviewed_at: null,
+        })
+        .eq('business_id', business.id);
+      if (error) throw error;
+
+      if (business.status === 'fuera_de_servicio') {
+        const { error: statusError } = await supabase.from('businesses')
+          .update({ status: 'inactivo' })
+          .eq('id', business.id);
+        if (statusError) throw statusError;
+        setBusiness((current) => ({ ...current, status: 'inactivo' }));
+      }
+
+      setVerificationStatus('pendiente');
+      setVerification((current) => ({
+        ...current,
+        verification_status: 'pendiente',
+        review_note: null,
+        reviewed_by: null,
+        reviewed_at: null,
+      }));
+      Alert.alert('Enviado a revisión', 'El equipo de IstmiYa revisará los datos actualizados.');
+    } catch (error) {
+      Alert.alert('No se pudieron guardar los datos', error.message);
+    }
+  };
+
   // --- COMPONENTES DE UI ---
 
   const renderProductItem = ({ item }) => (
@@ -221,6 +320,86 @@ const BusinessHomeScreen = ({ navigation }) => {
         </View>
         <HelpButton navigation={navigation} context="negocio" />
 
+        <View style={[styles.metricsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Resumen del negocio</Text>
+          <View style={styles.metricsGrid}>
+            <Metric label="Pedidos" value={metrics.orders} colors={colors} />
+            <Metric label="Activos" value={metrics.active_orders} colors={colors} />
+            <Metric label="Entregados" value={metrics.completed_orders} colors={colors} />
+            <Metric label="Quejas" value={metrics.complaints} colors={colors} />
+          </View>
+          <Text style={[styles.metricsSales, { color: colors.primary }]}>
+            Ventas entregadas: {formatCOP(metrics.sales, locale)}
+          </Text>
+        </View>
+
+        <View style={[styles.verificationCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Verificación del negocio</Text>
+          <Text style={[styles.verificationText, { color: colors.muted }]}>
+            {verificationStatus === 'aprobado'
+              ? 'Perfil aprobado. Puedes activar tu local cuando esté listo.'
+              : verificationStatus === 'rechazado'
+                ? 'La revisión requiere correcciones. Contacta soporte para más información.'
+                : 'Pendiente de revisión. El local no puede recibir pedidos hasta ser aprobado.'}
+          </Text>
+          {verificationStatus !== 'aprobado' && verification && (
+            <View>
+              <TextInput
+                style={[styles.verificationInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.input }]}
+                value={verification.legal_name || ''}
+                onChangeText={(value) => setVerification((current) => ({ ...current, legal_name: value }))}
+                placeholder="Razón social"
+                placeholderTextColor={colors.muted}
+              />
+              <View style={styles.identificationTypeRow}>
+                {['NIT', 'CC'].map((type) => (
+                  <AnimatedButton
+                    key={type}
+                    title={type}
+                    onPress={() => setVerification((current) => ({ ...current, registration_id_type: type }))}
+                    variant={verification.registration_id_type === type ? 'primary' : 'secondary'}
+                    style={styles.identificationType}
+                  />
+                ))}
+              </View>
+              <TextInput
+                style={[styles.verificationInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.input }]}
+                value={verification.registration_id || ''}
+                onChangeText={(value) => setVerification((current) => ({ ...current, registration_id: value }))}
+                placeholder="Número de identificación"
+                placeholderTextColor={colors.muted}
+              />
+              <TextInput
+                style={[styles.verificationInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.input }]}
+                value={verification.complaint_email || ''}
+                onChangeText={(value) => setVerification((current) => ({ ...current, complaint_email: value }))}
+                placeholder="Correo para quejas y solicitudes"
+                placeholderTextColor={colors.muted}
+                keyboardType="email-address"
+                autoCapitalize="none"
+              />
+              {verification.review_note
+                ? <Text style={[styles.verificationText, { color: colors.muted }]}>Observación: {verification.review_note}</Text>
+                : null}
+              <AnimatedButton
+                title="Guardar y enviar a revisión"
+                onPress={saveVerificationDetails}
+                style={styles.photoButton}
+              />
+            </View>
+          )}
+          {business?.store_image_url
+            ? <Image source={{ uri: business.store_image_url }} style={styles.storeImage} />
+            : null}
+          <AnimatedButton
+            title={uploadingBusinessPhoto ? 'Cargando foto...' : 'Actualizar foto del local'}
+            onPress={handleBusinessPhoto}
+            variant="secondary"
+            disabled={uploadingBusinessPhoto}
+            style={styles.photoButton}
+          />
+        </View>
+
         <WalletCard
           balance={wallet.balance}
           subscriptionActive={subscription.is_active}
@@ -238,6 +417,7 @@ const BusinessHomeScreen = ({ navigation }) => {
                 key={s}
                 title={s === 'fuera_de_servicio' ? 'Bloqueado' : s.charAt(0).toUpperCase() + s.slice(1)}
                 onPress={() => updateBusinessStatus(s)}
+                disabled={s === 'activo' && verificationStatus !== 'aprobado'}
                 variant={business.status === s ? 'primary' : 'secondary'}
                 style={styles.statusAction}
                 buttonStyle={styles.statusBtn}
@@ -336,6 +516,19 @@ const styles = StyleSheet.create({
   loadingText: { marginTop: 10, color: '#1A237E', fontSize: 16 },
 
   sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#1A237E', marginBottom: 15 },
+  verificationCard: { padding: 16, borderRadius: 14, borderWidth: 1, marginBottom: 20 },
+  metricsCard: { padding: 16, borderRadius: 14, borderWidth: 1, marginBottom: 20 },
+  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
+  metric: { width: '48%', borderRadius: 10, padding: 12, marginBottom: 8 },
+  metricValue: { fontSize: 22, fontWeight: '800' },
+  metricLabel: { fontSize: 12, marginTop: 2 },
+  metricsSales: { fontSize: 16, fontWeight: '700', marginTop: 10 },
+  verificationText: { fontSize: 14, lineHeight: 20, marginBottom: 12 },
+  storeImage: { width: '100%', height: 170, borderRadius: 12, marginBottom: 10 },
+  photoButton: { alignSelf: 'stretch' },
+  verificationInput: { borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8 },
+  identificationTypeRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
+  identificationType: { flex: 1, alignSelf: 'stretch' },
 
   // Status Section
   statusContainer: { marginBottom: 25 },

@@ -15,12 +15,29 @@ export default function AboutScreen({ navigation }) {
   const language = usePreferencesStore((state) => state.language);
   const openContact = async () => {
     if (!APP_INFO.supportEmail) {
-      Alert.alert('Contacto por configurar', 'Configura el correo oficial de soporte en app/src/constants/appInfo.js.');
+      Alert.alert('Contacto no disponible', 'El correo oficial de soporte todavía no está configurado.');
       return;
     }
     const subject = language === 'en' ? 'Help with IstmiYa' : 'Ayuda con IstmiYa';
     const url = `mailto:${APP_INFO.supportEmail}?subject=${encodeURIComponent(subject)}`;
-    if (await Linking.canOpenURL(url)) Linking.openURL(url);
+    try {
+      if (!(await Linking.canOpenURL(url))) {
+        throw new Error('No hay una aplicación de correo disponible en este dispositivo.');
+      }
+      await Linking.openURL(url);
+    } catch (error) {
+      Alert.alert(
+        'No se pudo abrir el correo',
+        `${error.message}\n\nPuedes escribir a ${APP_INFO.supportEmail}.`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          {
+            text: 'Abrir soporte',
+            onPress: () => navigation.navigate('Support', { context: 'soporte' }),
+          },
+        ],
+      );
+    }
   };
 
   return (
@@ -40,7 +57,7 @@ export default function AboutScreen({ navigation }) {
       <AnimatedButton title={t('about.privacy')} onPress={() => navigation.navigate('Privacy')} variant="secondary" />
       <AnimatedButton title={t('about.admin')} onPress={() => navigation.navigate('Login', { adminOnly: true })} variant="secondary" />
       {role === 'superadmin' && <Text style={styles.admin}>{t('about.adminActive')}</Text>}
-      <Text style={styles.note}>{t('about.note')}</Text>
+      <Text style={styles.note}>{APP_INFO.supportEmail}</Text>
     </ScrollView>
   );
 }

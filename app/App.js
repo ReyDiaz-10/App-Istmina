@@ -1,5 +1,6 @@
 // app/App.js
 import React, { useEffect } from 'react';
+import './src/services/liveKitSetup';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
@@ -12,8 +13,10 @@ import StoreDetailScreen from './src/screens/client/StoreDetailScreen';
 import CartScreen from './src/screens/client/CartScreen';
 import ClientOrdersScreen from './src/screens/client/ClientOrdersScreen';
 import OrderChatScreen from './src/screens/client/OrderChatScreen';
+import OrderCallScreen from './src/screens/calls/OrderCallScreen';
 import BusinessTabs from './src/navigation/BusinessTabs';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
+import DriverProfileScreen from './src/screens/driver/DriverProfileScreen';
 import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
 import SupportTickets from './src/screens/client/SupportTickets';
 import AboutScreen from './src/screens/client/AboutScreen';
@@ -97,8 +100,10 @@ export default function App() {
           <Stack.Screen name="Cart" component={CartScreen} />
           <Stack.Screen name="ClientOrders" component={ClientOrdersScreen} />
           <Stack.Screen name="OrderChat" component={OrderChatScreen} />
+          <Stack.Screen name="OrderCall" component={OrderCallScreen} />
           <Stack.Screen name="BusinessHome" component={BusinessTabs} />
           <Stack.Screen name="DriverHome" component={DriverHomeScreen} />
+          <Stack.Screen name="DriverProfile" component={DriverProfileScreen} />
           <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
           <Stack.Screen name="Support" component={SupportTickets} />
           <Stack.Screen name="About" component={AboutScreen} />
