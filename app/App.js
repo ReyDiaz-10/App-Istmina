@@ -89,6 +89,7 @@ export default function App() {
           initialRouteName={getInitialRoute(user, useAuthStore.getState().profile)}
           screenOptions={{ 
             headerShown: false,
+            cardStyle: { flex: 1, minHeight: 0 },
           }}
         >
           <Stack.Screen name="ClientHome" component={ClientHomeScreen} />

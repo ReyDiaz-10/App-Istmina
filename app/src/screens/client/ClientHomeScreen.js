@@ -181,6 +181,7 @@ const ClientHomeScreen = ({ navigation }) => {
         <ActivityIndicator size="large" color={theme.primary} style={styles.loader} />
       ) : (
         <FlatList
+          style={styles.businessList}
           data={businesses}
           keyExtractor={(item) => item.id}
           renderItem={renderBusinessCard}
@@ -196,7 +197,8 @@ const ClientHomeScreen = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F5F7FA' },
+  container: { flex: 1, minHeight: 0, overflow: 'hidden', backgroundColor: '#F5F7FA' },
+  businessList: { flex: 1, minHeight: 0 },
   listContent: { paddingBottom: 24 },
   brandHeader: {
     paddingHorizontal: 20,

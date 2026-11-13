@@ -1,6 +1,7 @@
 {
-  "dependencies": {
-    "20": "^3.1.9",
-    "22": "^0.0.0"
+  "name": "app-istmina",
+  "private": true,
+  "engines": {
+    "node": "22.x"
   }
 }
