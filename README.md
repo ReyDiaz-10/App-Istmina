@@ -65,7 +65,7 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 - **Privacidad:** se incluye un borrador de política accesible desde la app. Completa los datos del responsable y sométela a revisión legal antes de publicar.
 - **Perfiles de prueba:** script opcional que crea cuentas de demostración y genera contraseñas aleatorias localmente.
 
-> **Estado de integración:** el registro por rol, la revisión manual, el chat moderado, las llamadas y los paneles requieren aplicar las migraciones `0006` a `0008`. Las llamadas requieren desplegar la función de tokens y configurar LiveKit; en móvil necesitan un development build (no Expo Go). Las notificaciones por correo requieren configurar Resend. Los pagos dependen de las Edge Functions y credenciales de Wompi. Consulta [INSTRUCCIONES.md](./INSTRUCCIONES.md) antes de habilitar estos flujos.
+> **Estado de integración:** el registro por rol, la revisión manual, el chat moderado, las llamadas y los paneles requieren aplicar las migraciones `0006` a `0009`. La migración `0009` incluye SuperAdmin en la restricción de roles para esquemas que usan `CHECK`. Las llamadas requieren desplegar la función de tokens y configurar LiveKit; en móvil necesitan un development build (no Expo Go). Las notificaciones por correo requieren configurar Resend. Los pagos dependen de las Edge Functions y credenciales de Wompi. Consulta [INSTRUCCIONES.md](./INSTRUCCIONES.md) antes de habilitar estos flujos.
 
 ## 🧰 Tecnologías
 

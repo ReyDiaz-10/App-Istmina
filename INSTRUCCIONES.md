@@ -62,9 +62,9 @@ supabase link --project-ref TU_PROJECT_REF
 supabase db push
 ```
 
-Revisa el estado de la base antes de aplicar cambios. Las migraciones en `supabase/migrations/` definen los roles, estados, permisos, billetera, suscripciones, operaciones de pedidos, bandeja de soporte, perfiles pendientes de verificación y moderación del chat. `0006_role_onboarding_and_verification.sql` crea los datos asociados al registro y protege la aprobación; `0007_chat_moderation.sql` exige consentimiento para compartir números y agrega métricas del negocio. No ejecutes una migración manualmente en producción sin revisar primero su impacto y contar con respaldo.
+Revisa el estado de la base antes de aplicar cambios. Las migraciones en `supabase/migrations/` definen los roles, estados, permisos, billetera, suscripciones, operaciones de pedidos, bandeja de soporte, perfiles pendientes de verificación y moderación del chat. `0006_role_onboarding_and_verification.sql` crea los datos asociados al registro y protege la aprobación; `0007_chat_moderation.sql` exige consentimiento para compartir números y agrega métricas del negocio; `0009_allow_superadmin_profile_role.sql` permite el rol SuperAdmin en instalaciones cuyo esquema valida los roles con una restricción `CHECK`. No ejecutes una migración manualmente en producción sin revisar primero su impacto y contar con respaldo.
 
-> **Atención al esquema inicial:** `0001_initial_schema.sql` declara el tipo `user_role` dos veces. Si vas a inicializar una base vacía, revisa y corrige esa duplicación antes de ejecutar `supabase db push`; no edites una migración que ya se haya aplicado en un entorno compartido o de producción.
+La migración inicial declara cada tipo una sola vez para permitir crear un sandbox vacío. No vuelvas a editar ni reaplicar migraciones que ya estén registradas en un entorno compartido o de producción.
 
 Después de aplicar `0006` y `0007`, el registro de negocio/repartidor crea su perfil relacionado en el servidor. Los negocios quedan inactivos y los repartidores desconectados hasta la revisión de SuperAdmin. Los documentos del repartidor se guardan en buckets privados; la imagen del local se publica para mostrarla en el marketplace.
 
@@ -89,6 +89,8 @@ Despliega las funciones:
 supabase functions deploy create-wompi-payment
 supabase functions deploy wompi-webhook --no-verify-jwt
 ```
+
+El webhook desactiva la verificación JWT del gateway porque Wompi no envía un JWT de Supabase; la función valida la firma del evento antes de cambiar datos.
 
 En el panel de Wompi, configura la URL de eventos de **Sandbox**:
 
@@ -131,7 +133,7 @@ Para un Supabase local, inicia primero el stack local y ejecuta:
 ```powershell
 Set-Location 'D:\App-Istmina\app'
 $env:SUPABASE_URL='http://127.0.0.1:54321'
-$env:SUPABASE_SERVICE_ROLE_KEY='CLAVE_SERVICE_ROLE_LOCAL'
+$env:SUPABASE_SECRET_KEY='CLAVE_SECRET_LOCAL'
 $env:SEED_TEST_USERS='true'
 node .\src\scripts\seed-test-users.mjs
 Get-Content .\.env_test

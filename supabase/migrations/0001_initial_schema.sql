@@ -7,8 +7,6 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 -- Enum types
 CREATE TYPE user_role AS ENUM ('cliente', 'negocio', 'repartidor');
 
--- Enum types
-CREATE TYPE user_role AS ENUM ('cliente', 'negocio', 'repartidor');
 CREATE TYPE business_status AS ENUM ('activo', 'inactivo', 'fuera_de_servicio');
 CREATE TYPE order_status AS ENUM ('pendiente', 'pagado', 'preparando', 'en_camino', 'entregado', 'cancelado');
 CREATE TYPE payment_method AS ENUM ('nequi', 'llave', 'qr', 'efectivo');

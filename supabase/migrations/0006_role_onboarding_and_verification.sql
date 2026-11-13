@@ -201,8 +201,20 @@ BEGIN
     RAISE EXCEPTION 'Full name and phone are required';
   END IF;
 
-  INSERT INTO public.profiles (id, full_name, phone, role, status)
-  VALUES (NEW.id, v_name, v_phone, v_role::public.user_role, 'activo');
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'profiles'
+      AND column_name = 'role'
+      AND data_type = 'text'
+  ) THEN
+    INSERT INTO public.profiles (id, full_name, phone, role, status)
+    VALUES (NEW.id, v_name, v_phone, v_role, 'activo');
+  ELSE
+    INSERT INTO public.profiles (id, full_name, phone, role, status)
+    VALUES (NEW.id, v_name, v_phone, v_role::public.user_role, 'activo');
+  END IF;
 
   IF v_role = 'negocio' THEN
     IF NULLIF(BTRIM(NEW.raw_user_meta_data ->> 'store_name'), '') IS NULL
