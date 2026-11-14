@@ -20,12 +20,15 @@ export const useAuthStore = create((set, get) => ({
       if (!data) {
         console.log("No se encontró perfil, el usuario debe completar su registro.");
         set({ profile: null, loading: false });
+        return null;
       } else {
         set({ profile: data, loading: false });
+        return data;
       }
     } catch (error) {
       console.error('Error crítico cargando perfil:', error.message);
       set({ loading: false });
+      throw error;
     }
   },
 
@@ -74,8 +77,24 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
-  signIn: async (email, password) => {
+  updatePassword: async (password) => {
     set({ loading: true });
+    try {
+      if (!get().user) throw new Error('Debes iniciar sesión para cambiar la contraseña.');
+      if (password.length < 8) throw new Error('La contraseña debe tener al menos 8 caracteres.');
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+      set({ loading: false });
+      return { success: true };
+    } catch (error) {
+      set({ loading: false });
+      return { success: false, error: error.message };
+    }
+  },
+
+  signIn: async (email, password) => {
+    set({ loading: true, profile: null });
+    let authenticationSucceeded = false;
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -84,12 +103,31 @@ export const useAuthStore = create((set, get) => ({
 
       if (error) throw error;
 
+      authenticationSucceeded = true;
       await set({ user: data.user });
-      await useAuthStore.getState().fetchProfile(data.user.id);
+      const profile = await useAuthStore.getState().fetchProfile(data.user.id);
+      if (!profile) {
+        throw new Error('La cuenta inició sesión, pero no tiene un perfil en la tabla profiles. Aplica las migraciones 0018 y 0019 para habilitar el perfil admin.');
+      }
+      if (!['cliente', 'negocio', 'repartidor', 'admin', 'superadmin'].includes(profile.role)) {
+        throw new Error(`El perfil tiene un rol no reconocido (${profile.role || 'vacío'}). La cuenta administrativa debe quedar como admin.`);
+      }
+      try {
+        const { error: auditError } = await supabase.rpc('record_user_sign_in');
+        if (auditError) console.warn('No se pudo registrar el inicio de sesión:', auditError.message);
+      } catch (auditError) {
+        console.warn('No se pudo registrar el inicio de sesión:', auditError.message);
+      }
       
       set({ loading: false });
       return { success: true };
     } catch (error) {
+      if (authenticationSucceeded) {
+        try { await supabase.auth.signOut(); } catch (signOutError) {
+          console.warn('No se pudo cerrar la sesión incompleta:', signOutError.message);
+        }
+        set({ user: null, profile: null });
+      }
       set({ loading: false });
       return { success: false, error: error.message };
     }
@@ -162,6 +200,12 @@ export const useAuthStore = create((set, get) => ({
   signOut: async () => {
     set({ loading: true });
     try {
+      try {
+        const { error: auditError } = await supabase.rpc('record_user_sign_out');
+        if (auditError) console.warn('No se pudo registrar el cierre de sesión:', auditError.message);
+      } catch (auditError) {
+        console.warn('No se pudo registrar el cierre de sesión:', auditError.message);
+      }
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
 

@@ -147,9 +147,17 @@ const BusinessOrdersScreen = ({ navigation }) => {
           </Text>
         ))}
       </View>
-      <Text style={styles.totalText}>
-        Total: {formatCOP(item.total_amount, locale)}
-      </Text>
+      <View style={styles.amountBreakdown}>
+        <Text style={styles.amountText}>
+          Productos: {formatCOP(item.product_subtotal_cop ?? item.total_amount, locale)}
+        </Text>
+        <Text style={styles.amountText}>
+          Domicilio (para repartidor): {formatCOP(item.delivery_fee_cop, locale)}
+        </Text>
+        <Text style={styles.totalText}>
+          Total pagado: {formatCOP(item.total_amount, locale)}
+        </Text>
+      </View>
       <OrderStatusAnimation status={item.status} />
       {item.status === 'pagado' && (
         <AnimatedButton
@@ -212,6 +220,8 @@ const styles = StyleSheet.create({
   status: { fontSize: 11, fontWeight: 'bold', marginLeft: 8 },
   orderItems: { marginVertical: 8 },
   itemText: { fontSize: 14, color: '#666666', marginBottom: 3 },
+  amountBreakdown: { marginTop: 6 },
+  amountText: { fontSize: 13, color: '#666666', marginTop: 3, textAlign: 'right' },
   totalText: { fontSize: 17, fontWeight: 'bold', color: '#333333', textAlign: 'right', marginTop: 6 },
   action: { alignSelf: 'stretch', marginTop: 10 },
   actionSurface: { width: '100%' },

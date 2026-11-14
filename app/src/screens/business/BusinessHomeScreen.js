@@ -19,6 +19,8 @@ import { supabase } from '../../api/supabaseClient';
 import { useAuthStore } from '../../store/authStore';
 import AnimatedButton from '../../components/AnimatedButton';
 import WalletCard from '../../components/WalletCard';
+import BannerUploader from '../../components/BannerUploader';
+import DeliverySettingsCard from '../../components/DeliverySettingsCard';
 import { createBusinessPaymentLink } from '../../services/orders';
 import { uploadBusinessPhoto } from '../../services/onboardingMedia';
 import HelpButton from '../../components/HelpButton';
@@ -440,6 +442,15 @@ const BusinessHomeScreen = ({ navigation }) => {
           loading={paymentLoading}
           onTopUp={() => handleBusinessPayment('wallet')}
           onSubscribe={() => handleBusinessPayment('subscription')}
+        />
+        <BannerUploader
+          businessId={business.id}
+          subscriptionActive={subscription.is_active}
+          onUpgrade={() => handleBusinessPayment('subscription')}
+        />
+        <DeliverySettingsCard
+          business={business}
+          onSaved={(updatedBusiness) => setBusiness((current) => ({ ...current, ...updatedBusiness }))}
         />
 
         {/* ESTADO OPERACIONAL */}

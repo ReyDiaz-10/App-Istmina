@@ -15,6 +15,7 @@ import { useAuthStore } from '../../store/authStore';
 import AnimatedButton from '../../components/AnimatedButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { useTranslation } from '../../hooks/useTranslation';
+import { isAdminRole } from '../../utils/roles';
 
 const LoginScreen = ({ navigation, route }) => {
   const [email, setEmail] = useState('');
@@ -33,7 +34,7 @@ const LoginScreen = ({ navigation, route }) => {
     const result = await signIn(email, password);
     if (result.success) {
       const role = useAuthStore.getState().profile?.role;
-      if (adminOnly && role !== 'superadmin') {
+      if (adminOnly && !isAdminRole(role)) {
         await useAuthStore.getState().signOut();
         Alert.alert('Acceso denegado', 'Esta entrada es exclusiva para cuentas administrativas autorizadas.');
         return;
@@ -41,11 +42,17 @@ const LoginScreen = ({ navigation, route }) => {
       const roleRoute = {
         negocio: 'BusinessHome',
         repartidor: 'DriverHome',
+        admin: 'AdminDashboard',
         superadmin: 'AdminDashboard',
       }[role];
       const allowedRoutes = ['Cart', 'StoreDetail'];
       const destination = roleRoute
         || (allowedRoutes.includes(returnTo) ? returnTo : 'ClientHome');
+      if (adminOnly && destination !== 'AdminDashboard') {
+        await useAuthStore.getState().signOut();
+        Alert.alert('No se pudo abrir administración', 'La sesión es válida, pero verifica que el rol en profiles sea admin.');
+        return;
+      }
       navigation.reset({
         index: 0,
         routes: [{ name: destination, params: roleRoute ? undefined : returnParams }],

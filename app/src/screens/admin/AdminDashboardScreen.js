@@ -6,6 +6,7 @@ import HelpButton from '../../components/HelpButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { formatCOP } from '../../utils/formatters';
 import { getDriverDocumentUrl, getProfilePhotoUrl } from '../../services/onboardingMedia';
+import { isAdminRole } from '../../utils/roles';
 
 const Metric = ({ label, value }) => {
   const { colors } = useAppTheme();
@@ -13,7 +14,8 @@ const Metric = ({ label, value }) => {
 };
 
 export default function AdminDashboardScreen({ navigation }) {
-  const role = useAuthStore((state) => state.profile?.role);
+  const profile = useAuthStore((state) => state.profile);
+  const role = profile?.role;
   const signOut = useAuthStore((state) => state.signOut);
   const { colors } = useAppTheme();
   const [loading, setLoading] = useState(true);
@@ -32,13 +34,14 @@ export default function AdminDashboardScreen({ navigation }) {
     feedback: 0,
     pendingBusinesses: [],
     pendingDrivers: [],
+    operational: { active_businesses: 0, drivers: 0, orders_by_area: [] },
   });
 
   const load = useCallback(async () => {
-    if (role !== 'superadmin') return;
+    if (!isAdminRole(role)) return;
     setLoading(true);
     try {
-      const [summary, tickets, pendingBusinesses, pendingDrivers] = await Promise.all([
+      const [summary, tickets, pendingBusinesses, pendingDrivers, operational] = await Promise.all([
         supabase.rpc('admin_dashboard_summary'),
         supabase.from('support_tickets').select('*, profiles(full_name, role)').order('created_at', { ascending: false }).limit(100),
         supabase.from('business_verifications')
@@ -49,8 +52,9 @@ export default function AdminDashboardScreen({ navigation }) {
           .select('*, drivers!inner(id, profile_id, vehicle_type, plate_number, verification_status, profiles(full_name, phone, avatar_url))')
           .eq('verification_status', 'pendiente')
           .order('created_at', { ascending: true }),
+        supabase.rpc('admin_operational_metrics'),
       ]);
-      for (const result of [summary, tickets, pendingBusinesses, pendingDrivers]) {
+      for (const result of [summary, tickets, pendingBusinesses, pendingDrivers, operational]) {
         if (result.error) throw result.error;
       }
       const metrics = summary.data || {};
@@ -77,6 +81,7 @@ export default function AdminDashboardScreen({ navigation }) {
         feedback: metrics.feedback || 0,
         pendingBusinesses: pendingBusinesses.data || [],
         pendingDrivers: driverRows,
+        operational: operational.data || { active_businesses: 0, drivers: 0, orders_by_area: [] },
       });
     } catch (error) {
       Alert.alert('No se pudo cargar el panel', error.message);
@@ -111,18 +116,26 @@ export default function AdminDashboardScreen({ navigation }) {
     }
   };
 
-  if (role !== 'superadmin') return <View style={[styles.center, { backgroundColor: colors.background }]}><Text style={[styles.title, { color: colors.text }]}>Acceso restringido</Text><Text style={{ color: colors.text }}>Esta sección requiere una cuenta SuperAdmin.</Text></View>;
+  if (!isAdminRole(role)) return <View style={[styles.center, { backgroundColor: colors.background }]}><Text style={[styles.title, { color: colors.text }]}>Acceso restringido</Text><Text style={{ color: colors.text }}>Esta sección requiere una cuenta administradora.</Text></View>;
   if (loading) return <View style={[styles.center, { backgroundColor: colors.background }]}><ActivityIndicator size="large" color={colors.primary} /></View>;
 
   return <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}>
-    <View style={styles.top}><Text style={[styles.title, { color: colors.text }]}>Centro de control</Text><View style={styles.actions}><Pressable onPress={() => navigation.navigate('Settings')}><Text style={[styles.link, { color: colors.primary }]}>Configuración</Text></Pressable><Pressable onPress={load}><Text style={[styles.link, { color: colors.primary }]}>Actualizar</Text></Pressable></View></View>
+    <View style={styles.top}><View><Text style={[styles.title, { color: colors.text }]}>Centro de control</Text><Text style={[styles.muted, { color: colors.muted }]}>Hola, {profile?.nickname || profile?.full_name || 'Administrador'}</Text></View><View style={styles.actions}><Pressable onPress={() => navigation.navigate('Profile')}><Text style={[styles.link, { color: colors.primary }]}>Mi perfil</Text></Pressable><Pressable onPress={() => navigation.navigate('Settings')}><Text style={[styles.link, { color: colors.primary }]}>Configuración</Text></Pressable><Pressable onPress={load}><Text style={[styles.link, { color: colors.primary }]}>Actualizar</Text></Pressable></View></View>
+    <View style={styles.adminLinks}>
+      <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminFinance')}><Text style={[styles.link, { color: colors.primary }]}>Finanzas y retiros</Text></Pressable>
+      <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminActivity')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría en vivo</Text></Pressable>
+      <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminChatAudit')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría de chats</Text></Pressable>
+    </View>
     <HelpButton navigation={navigation} context="administración" compact />
     <Text style={[styles.subtitle, { color: colors.muted }]}>Indicadores acumulados de la plataforma</Text>
     <View style={styles.grid}>
       <Metric label="Usuarios" value={data.users} /><Metric label="Clientes" value={data.clients} />
       <Metric label="Pedidos totales" value={data.orders} /><Metric label="Pedidos activos" value={data.activeOrders} />
       <Metric label="Entregas completadas" value={data.completed} /><Metric label="Sugerencias y quejas" value={data.feedback} />
+      <Metric label="Negocios activos" value={data.operational.active_businesses} /><Metric label="Repartidores registrados" value={data.operational.drivers} />
     </View>
+    <Text style={[styles.section, { color: colors.text }]}>Pedidos por zona/dirección registrada</Text>
+    {data.operational.orders_by_area.map((area) => <Text key={area.area} style={[styles.muted, { color: colors.muted }]}>{area.area}: {area.orders} pedidos</Text>)}
     <Text style={[styles.section, { color: colors.text }]}>Pedidos por día · últimos 7 días</Text>
     {data.activity.map((day) => {
       const peak = Math.max(1, ...data.activity.map((item) => item.orders));
@@ -201,4 +214,4 @@ const ReviewActions = ({ onApprove, onReject, approveDisabled = false, colors })
   </View>
 );
 
-const styles = StyleSheet.create({ container: { padding: 18, backgroundColor: '#F5F7FA' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }, top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, actions: { flexDirection: 'row', alignItems: 'center' }, title: { fontSize: 26, fontWeight: '800', color: '#1A237E' }, subtitle: { color: '#687078', marginTop: 3, marginBottom: 16 }, grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }, metric: { width: '48%', backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 10 }, metricValue: { fontSize: 24, color: '#1A237E', fontWeight: '800' }, muted: { color: '#697279', marginTop: 5, lineHeight: 20 }, section: { fontSize: 20, fontWeight: '800', color: '#263238', marginTop: 20, marginBottom: 8 }, activityRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 4 }, activityDate: { width: 44, color: '#697279' }, barTrack: { flex: 1, height: 12, backgroundColor: '#E0E4F0', borderRadius: 8, overflow: 'hidden' }, bar: { height: 12, backgroundColor: '#3949AB', borderRadius: 8 }, activityCount: { width: 32, textAlign: 'right', color: '#273238', fontWeight: '700' }, row: { backgroundColor: '#fff', borderRadius: 10, padding: 13, marginBottom: 8 }, rowMain: { flex: 1 }, rowTitle: { fontWeight: '700', color: '#273238' }, ticket: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10 }, reviewCard: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 10 }, reviewActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }, businessReviewImage: { width: '100%', height: 140, borderRadius: 8, marginTop: 10 }, documentImages: { flexDirection: 'row', gap: 10, marginTop: 10 }, reviewImage: { width: 120, height: 85, borderRadius: 8, backgroundColor: '#E0E0E0' }, message: { color: '#30383D', marginTop: 8, lineHeight: 21 }, replyInput: { backgroundColor: '#F5F7FA', padding: 10, borderRadius: 8, minHeight: 60, marginTop: 10, textAlignVertical: 'top' }, actions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }, link: { color: '#1A237E', fontWeight: '700', padding: 6 }, logout: { backgroundColor: '#1A237E', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 24, marginBottom: 25 }, logoutText: { color: '#fff', fontWeight: '700' } });
+const styles = StyleSheet.create({ container: { padding: 18, backgroundColor: '#F5F7FA' }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }, top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, actions: { flexDirection: 'row', alignItems: 'center' }, adminLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 }, adminLink: { borderRadius: 10, padding: 8 }, title: { fontSize: 26, fontWeight: '800', color: '#1A237E' }, subtitle: { color: '#687078', marginTop: 3, marginBottom: 16 }, grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' }, metric: { width: '48%', backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 10 }, metricValue: { fontSize: 24, color: '#1A237E', fontWeight: '800' }, muted: { color: '#697279', marginTop: 5, lineHeight: 20 }, section: { fontSize: 20, fontWeight: '800', color: '#263238', marginTop: 20, marginBottom: 8 }, activityRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 4 }, activityDate: { width: 44, color: '#697279' }, barTrack: { flex: 1, height: 12, backgroundColor: '#E0E4F0', borderRadius: 8, overflow: 'hidden' }, bar: { height: 12, backgroundColor: '#3949AB', borderRadius: 8 }, activityCount: { width: 32, textAlign: 'right', color: '#273238', fontWeight: '700' }, row: { backgroundColor: '#fff', borderRadius: 10, padding: 13, marginBottom: 8 }, rowMain: { flex: 1 }, rowTitle: { fontWeight: '700', color: '#273238' }, ticket: { backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 10 }, reviewCard: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 10 }, reviewActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }, businessReviewImage: { width: '100%', height: 140, borderRadius: 8, marginTop: 10 }, documentImages: { flexDirection: 'row', gap: 10, marginTop: 10 }, reviewImage: { width: 120, height: 85, borderRadius: 8, backgroundColor: '#E0E0E0' }, message: { color: '#30383D', marginTop: 8, lineHeight: 21 }, replyInput: { backgroundColor: '#F5F7FA', padding: 10, borderRadius: 8, minHeight: 60, marginTop: 10, textAlignVertical: 'top' }, actions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 }, link: { color: '#1A237E', fontWeight: '700', padding: 6 }, logout: { backgroundColor: '#1A237E', padding: 14, borderRadius: 10, alignItems: 'center', marginTop: 24, marginBottom: 25 }, logoutText: { color: '#fff', fontWeight: '700' } });

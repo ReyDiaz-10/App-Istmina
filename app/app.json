@@ -8,7 +8,13 @@
     "userInterfaceStyle": "automatic",
     "plugins": [
       "@livekit/react-native-expo-plugin",
-      "@config-plugins/react-native-webrtc"
+      "@config-plugins/react-native-webrtc",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "IstmiYa usa tu ubicación solo para calcular el domicilio y coordinar tu pedido."
+        }
+      ]
     ],
     "splash": {
       "image": "./assets/images/istmiya-adaptive-foreground.png",

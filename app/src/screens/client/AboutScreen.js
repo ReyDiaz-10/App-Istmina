@@ -3,6 +3,7 @@ import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native
 import AnimatedButton from '../../components/AnimatedButton';
 import { APP_INFO } from '../../constants/appInfo';
 import { useAuthStore } from '../../store/authStore';
+import { isAdminRole } from '../../utils/roles';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import MarketplaceBrand from '../../components/MarketplaceBrand';
 import { useTranslation } from '../../hooks/useTranslation';
@@ -56,7 +57,7 @@ export default function AboutScreen({ navigation }) {
       <AnimatedButton title={t('home.settings')} onPress={() => navigation.navigate('Settings')} variant="secondary" />
       <AnimatedButton title={t('about.privacy')} onPress={() => navigation.navigate('Privacy')} variant="secondary" />
       <AnimatedButton title={t('about.admin')} onPress={() => navigation.navigate('Login', { adminOnly: true })} variant="secondary" />
-      {role === 'superadmin' && <Text style={styles.admin}>{t('about.adminActive')}</Text>}
+      {isAdminRole(role) && <Text style={styles.admin}>{t('about.adminActive')}</Text>}
       <Text style={styles.note}>{APP_INFO.supportEmail}</Text>
     </ScrollView>
   );

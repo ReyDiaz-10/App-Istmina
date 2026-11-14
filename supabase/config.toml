@@ -427,3 +427,9 @@ enabled = true
 
 [functions.wompi-webhook]
 verify_jwt = false
+
+[functions.process-payouts]
+verify_jwt = false
+
+[functions.wompi-payouts-webhook]
+verify_jwt = false

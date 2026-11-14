@@ -109,15 +109,13 @@ serve(async (request) => {
 
       purpose = body.purpose;
       businessId = business.id;
-      const amountEnv = Deno.env.get(
-        purpose === "subscription"
-          ? "WOMPI_SUBSCRIPTION_AMOUNT_COP"
-          : "WOMPI_WALLET_TOPUP_AMOUNT_COP",
-      );
-      const amountCop = amountEnv
-        ? Number(amountEnv)
-        : purpose === "subscription"
-          ? 30000
+      const amountEnv = purpose === "wallet"
+        ? Deno.env.get("WOMPI_WALLET_TOPUP_AMOUNT_COP")
+        : undefined;
+      const amountCop = purpose === "subscription"
+        ? 35000
+        : amountEnv
+          ? Number(amountEnv)
           : 50000;
 
       if (!Number.isSafeInteger(amountCop) || amountCop <= 0) {

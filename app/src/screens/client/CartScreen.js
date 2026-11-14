@@ -10,26 +10,101 @@ import {
   Text,
   View,
 } from 'react-native';
+import * as Location from 'expo-location';
 import { useCartStore } from '../../store/cartStore';
 import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../api/supabaseClient';
 import AnimatedButton from '../../components/AnimatedButton';
 import { useRoleTheme } from '../../hooks/useRoleTheme';
-import { createOrder, createOrderPaymentLink } from '../../services/orders';
+import { createOrder, createOrderPaymentLink, quoteDeliveryFee } from '../../services/orders';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { formatCOP } from '../../utils/formatters';
 
 const CartScreen = ({ navigation }) => {
   const { items, getTotal, clearCart, updateQuantity, removeItem } = useCartStore();
+  const businessId = items[0]?.businessId || null;
   const { user } = useAuthStore();
   const theme = useRoleTheme();
   const { colors } = useAppTheme();
   const locale = usePreferencesStore((state) => state.language);
   const [loading, setLoading] = useState(false);
+  const [deliveryMode, setDeliveryMode] = useState(null);
+  const [deliveryLocation, setDeliveryLocation] = useState(null);
+  const [deliveryQuote, setDeliveryQuote] = useState(null);
+  const [deliveryLoading, setDeliveryLoading] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [deliveryError, setDeliveryError] = useState(null);
   const [pendingOrderId, setPendingOrderId] = useState(null);
   const paymentChannel = useRef(null);
   const completedOrder = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    setDeliveryMode(null);
+    setDeliveryQuote(null);
+    setDeliveryError(null);
+    if (!businessId) return undefined;
+
+    const loadDeliveryMode = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('businesses')
+          .select('delivery_fee_mode')
+          .eq('id', businessId)
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) throw new Error('No se encontró la tarifa del negocio.');
+        if (active) setDeliveryMode(data.delivery_fee_mode);
+      } catch (error) {
+        if (active) setDeliveryError(error.message);
+      }
+    };
+
+    loadDeliveryMode();
+    return () => {
+      active = false;
+    };
+  }, [businessId]);
+
+  useEffect(() => {
+    let active = true;
+    setDeliveryQuote(null);
+    if (
+      !businessId
+      || !deliveryMode
+      || (deliveryMode === 'istmiya_dynamic' && !deliveryLocation)
+    ) {
+      setDeliveryLoading(false);
+      return undefined;
+    }
+
+    const loadQuote = async () => {
+      setDeliveryLoading(true);
+      setDeliveryError(null);
+      try {
+        const quote = await quoteDeliveryFee({
+          businessId,
+          deliveryLatitude: deliveryMode === 'istmiya_dynamic'
+            ? deliveryLocation.latitude
+            : null,
+          deliveryLongitude: deliveryMode === 'istmiya_dynamic'
+            ? deliveryLocation.longitude
+            : null,
+        });
+        if (active) setDeliveryQuote(quote);
+      } catch (error) {
+        if (active) setDeliveryError(error.message);
+      } finally {
+        if (active) setDeliveryLoading(false);
+      }
+    };
+
+    loadQuote();
+    return () => {
+      active = false;
+    };
+  }, [businessId, deliveryLocation, deliveryMode]);
 
   const openChatAfterPayment = useCallback((orderId) => {
     if (completedOrder.current === orderId) return;
@@ -94,12 +169,33 @@ const CartScreen = ({ navigation }) => {
     }
 
     if (items.length === 0) return;
+    if (items.some((item) => item.businessId !== businessId)) {
+      Alert.alert('Un solo negocio por pedido', 'Finaliza este pedido antes de agregar productos de otro negocio.');
+      return;
+    }
+    if (!deliveryMode || !deliveryQuote) {
+      Alert.alert(
+        'Domicilio pendiente',
+        deliveryError || 'Espera a que se calcule la tarifa antes de continuar.',
+      );
+      return;
+    }
+    if (deliveryMode === 'istmiya_dynamic' && !deliveryLocation) {
+      Alert.alert('Ubicación necesaria', 'Comparte tu ubicación para calcular el domicilio.');
+      return;
+    }
     setLoading(true);
 
     try {
       const orderId = pendingOrderId || await createOrder({
-        businessId: items[0].businessId,
+        businessId,
         items,
+        deliveryLatitude: deliveryMode === 'istmiya_dynamic'
+          ? deliveryLocation.latitude
+          : null,
+        deliveryLongitude: deliveryMode === 'istmiya_dynamic'
+          ? deliveryLocation.longitude
+          : null,
       });
       setPendingOrderId(orderId);
       watchPayment(orderId);
@@ -116,6 +212,31 @@ const CartScreen = ({ navigation }) => {
       setLoading(false);
     }
   };
+
+  const requestDeliveryLocation = async () => {
+    setLocationLoading(true);
+    setDeliveryError(null);
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== 'granted') {
+        throw new Error('Debes permitir la ubicación para calcular el domicilio dinámico.');
+      }
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      setDeliveryLocation({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      });
+    } catch (error) {
+      setDeliveryError(error.message);
+    } finally {
+      setLocationLoading(false);
+    }
+  };
+
+  const deliveryFee = Number(deliveryQuote?.delivery_fee_cop || 0);
+  const orderTotal = getTotal() + deliveryFee;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -166,7 +287,54 @@ const CartScreen = ({ navigation }) => {
       />
 
       <View style={[styles.footer, { backgroundColor: colors.surface }]}>
-        <Text style={[styles.totalLabel, { color: colors.text }]}>Total: <Text style={styles.totalAmount}>{formatCOP(getTotal(), locale)}</Text></Text>
+        {deliveryMode === 'istmiya_dynamic' ? (
+          <View style={styles.locationSection}>
+            <Text style={[styles.deliveryHint, { color: colors.muted }]}>
+              Tu ubicación se usa para calcular el domicilio y coordinar esta entrega.
+            </Text>
+            <AnimatedButton
+              title={locationLoading
+                ? 'Obteniendo ubicación...'
+                : deliveryLocation
+                  ? 'Actualizar ubicación de entrega'
+                  : 'Usar mi ubicación para calcular el domicilio'}
+              onPress={requestDeliveryLocation}
+              disabled={locationLoading || deliveryLoading}
+              variant="secondary"
+              style={styles.locationButton}
+            />
+          </View>
+        ) : null}
+        <View style={styles.feeRow}>
+          <Text style={[styles.feeLabel, { color: colors.muted }]}>Subtotal de productos</Text>
+          <Text style={[styles.feeValue, { color: colors.text }]}>{formatCOP(getTotal(), locale)}</Text>
+        </View>
+        <View style={styles.feeRow}>
+          <Text style={[styles.feeLabel, { color: colors.muted }]}>Domicilio</Text>
+          <Text style={[styles.feeValue, { color: colors.text }]}>
+            {deliveryLoading
+              ? 'Calculando...'
+              : deliveryQuote
+                ? formatCOP(deliveryFee, locale)
+                : deliveryMode === 'istmiya_dynamic'
+                  ? 'Comparte tu ubicación'
+                  : 'Cargando tarifa...'}
+          </Text>
+        </View>
+        {deliveryQuote?.distance_meters != null ? (
+          <Text style={[styles.distanceText, { color: colors.muted }]}>
+            Distancia directa: {(Number(deliveryQuote.distance_meters) / 1000).toFixed(2)} km
+          </Text>
+        ) : null}
+        {deliveryError ? (
+          <Text accessibilityRole="alert" style={styles.deliveryError}>{deliveryError}</Text>
+        ) : null}
+        <Text style={[styles.totalLabel, { color: colors.text }]}>
+          Total a pagar:{' '}
+          <Text style={styles.totalAmount}>
+            {deliveryQuote ? formatCOP(orderTotal, locale) : 'Pendiente de calcular'}
+          </Text>
+        </Text>
         <Text style={[styles.paymentLabel, { color: colors.muted }]}>Pago seguro en línea con Wompi</Text>
 
         <AnimatedButton
@@ -176,7 +344,11 @@ const CartScreen = ({ navigation }) => {
               ? pendingOrderId ? 'Reintentar pago con Wompi' : 'Pagar con Wompi'
               : 'Iniciar sesión para pedir'}
           onPress={handleCheckout}
-          disabled={loading || (Boolean(user) && items.length === 0)}
+          disabled={loading || (Boolean(user) && (
+            items.length === 0
+            || !deliveryQuote
+            || deliveryLoading
+          ))}
           style={styles.checkoutBtn}
           buttonStyle={styles.checkoutSurface}
           textStyle={styles.checkoutText}
@@ -205,7 +377,15 @@ const styles = StyleSheet.create({
   removeSurface: { borderWidth: 0, paddingHorizontal: 8, minHeight: 36 },
   removeText: { fontSize: 12 },
   footer: { backgroundColor: '#fff', padding: 20, borderRadius: 20, elevation: 5, marginTop: 20 },
-  totalLabel: { fontSize: 20, fontWeight: 'bold', textAlign: 'right', marginBottom: 15 },
+  locationSection: { marginBottom: 12 },
+  deliveryHint: { fontSize: 12, lineHeight: 18, marginBottom: 8 },
+  locationButton: { alignSelf: 'stretch' },
+  feeRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
+  feeLabel: { fontSize: 14 },
+  feeValue: { fontSize: 14, fontWeight: '600' },
+  distanceText: { fontSize: 12, textAlign: 'right', marginBottom: 8 },
+  deliveryError: { color: '#B3261E', fontSize: 12, lineHeight: 18, marginBottom: 8 },
+  totalLabel: { fontSize: 20, fontWeight: 'bold', textAlign: 'right', marginTop: 8, marginBottom: 15 },
   totalAmount: { color: '#2E7D32' },
   paymentLabel: { fontSize: 16, fontWeight: 'bold', color: '#555', marginBottom: 10 },
   checkoutBtn: { alignSelf: 'stretch' },

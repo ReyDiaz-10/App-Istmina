@@ -64,9 +64,9 @@ supabase db push
 
 Revisa el estado de la base antes de aplicar cambios. Las migraciones en `supabase/migrations/` definen los roles, estados, permisos, billetera, suscripciones, operaciones de pedidos, bandeja de soporte, perfiles pendientes de verificación y moderación del chat. `0006_role_onboarding_and_verification.sql` crea los datos asociados al registro y protege la aprobación; `0007_chat_moderation.sql` exige consentimiento para compartir números y agrega métricas del negocio; `0009_allow_superadmin_profile_role.sql` permite el rol SuperAdmin en instalaciones cuyo esquema valida los roles con una restricción `CHECK`; `0010_public_verified_business_lookup.sql` permite listar negocios aprobados sin conceder acceso público a los datos legales de verificación; `0011_customer_profile_username.sql` conserva el nombre de usuario legado; `0012_customer_profile_nickname.sql` agrega el apodo independiente que se usa en el saludo de bienvenida. No ejecutes una migración manualmente en producción sin revisar primero su impacto y contar con respaldo.
 
-La migración inicial declara cada tipo una sola vez para permitir crear un sandbox vacío. No vuelvas a editar ni reaplicar migraciones que ya estén registradas en un entorno compartido o de producción.
+La migración inicial declara cada tipo una sola vez para permitir crear un sandbox vacío. No vuelvas a editar ni reaplicar migraciones que ya estén registradas en un entorno compartido o de producción. Las migraciones `0013`–`0019` agregan tarifas, administración, pagos a repartidores, auditoría de pedidos bloqueados y enlazan el usuario administrador existente con el rol interno `admin`.
 
-Después de aplicar `0006` y `0007`, el registro de negocio/repartidor crea su perfil relacionado en el servidor. Los negocios quedan inactivos y los repartidores desconectados hasta la revisión de SuperAdmin. Los documentos del repartidor se guardan en buckets privados; la imagen del local se publica para mostrarla en el marketplace.
+Después de aplicar `0006` y `0007`, el registro de negocio/repartidor crea su perfil relacionado en el servidor. Los negocios quedan inactivos y los repartidores desconectados hasta la revisión administrativa. Los documentos del repartidor se guardan en buckets privados; la imagen del local se publica para mostrarla en el marketplace. Las migraciones `0018` y `0019` añaden `admin` como rol válido, permiten sus permisos en las políticas existentes y enlazan la cuenta Auth `neildiazusb@gmail.com` con `profiles.role = 'admin'`. Las cuentas `superadmin` antiguas siguen aceptándose por compatibilidad.
 
 ## 5. Configurar y desplegar Wompi
 
@@ -149,6 +149,17 @@ Remove-Item Env:SUPABASE_ALLOW_REMOTE_TEST_SEED
 
 El script restablece la contraseña de las cuentas demo si ya existen. Guarda las credenciales generadas de forma segura; no las envíes al repositorio ni las reutilices en producción.
 
+### Provisionar la cuenta administradora
+
+La cuenta inicial se crea en Supabase Auth mediante un proceso de servidor, nunca desde la app cliente. Configura temporalmente `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ADMIN_INITIAL_PASSWORD` y `ADMIN_PHONE` en el entorno de PowerShell (preferiblemente desde un gestor de secretos) y ejecuta:
+
+```powershell
+Set-Location 'D:\App-Istmina\app'
+node .\src\scripts\provision-admin.mjs
+```
+
+El correo inicial es `neildiazusb@gmail.com`; el script crea o actualiza el usuario y su perfil `admin` de forma repetible. Si el usuario Auth ya fue creado desde Supabase, aplica las migraciones hasta `0019` para enlazar su perfil. Si no hay teléfono en los metadatos, la migración deja un marcador `PENDIENTE-...`; actualízalo desde Mi perfil al primer ingreso. No guardes la clave service role ni la contraseña en archivos del repositorio. Cambia la contraseña inicial desde el perfil tras iniciar sesión.
+
 ## 9. Despliegue en Vercel
 
 La configuración está en `vercel.json`. En el panel de Vercel:
@@ -191,7 +202,7 @@ Al lanzar una versión, actualiza `version` en `app/app.json` y `app/package.jso
 
 Las preferencias locales se guardan con AsyncStorage. El idioma inicial se define en `expo.extra.defaultLanguage` de `app/app.json`; actualmente están disponibles Español (Latinoamérica) y Español (Colombia). La apariencia automática usa modo claro entre las 06:00 y 17:59 y modo oscuro el resto del día; también se puede elegir modo día, noche o seguir el sistema.
 
-La pantalla **Mi perfil** permite editar nombre completo, apodo y teléfono; el apodo aparece en el saludo. Los cambios de correo se solicitan por separado y pueden requerir confirmación desde el nuevo correo, según la configuración de autenticación de Supabase. Aplica la migración `0012_customer_profile_nickname.sql` con `supabase db push` antes de publicar esta versión. Vercel despliega la aplicación, pero no aplica migraciones de Supabase.
+La pantalla **Mi perfil** permite editar nombre completo, apodo y teléfono; el apodo aparece en el saludo. Los cambios de correo se solicitan por separado y pueden requerir confirmación desde el nuevo correo, según la configuración de autenticación de Supabase. Aplica las migraciones pendientes hasta `0019` con `supabase db push` antes de publicar esta versión. Vercel despliega la aplicación, pero no aplica migraciones de Supabase.
 
 Los iconos del marketplace se generan desde `app/scripts/generate-marketplace-icon.ps1`. El script crea recursos nuevos en `app/assets/images`; los iconos Expo anteriores se conservan.
 

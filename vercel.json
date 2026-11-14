@@ -1,6 +1,6 @@
 {
   "framework": null,
-  "installCommand": "npm ci --prefix app",
+  "installCommand": "npm ci --legacy-peer-deps --prefix app",
   "buildCommand": "npm --prefix app run build:web",
   "outputDirectory": "app/dist",
   "rewrites": [

@@ -18,6 +18,9 @@ import BusinessTabs from './src/navigation/BusinessTabs';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
 import DriverProfileScreen from './src/screens/driver/DriverProfileScreen';
 import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
+import AdminFinanceScreen from './src/screens/admin/AdminFinanceScreen';
+import AdminActivityScreen from './src/screens/admin/AdminActivityScreen';
+import AdminChatAuditScreen from './src/screens/admin/AdminChatAuditScreen';
 import SupportTickets from './src/screens/client/SupportTickets';
 import AboutScreen from './src/screens/client/AboutScreen';
 import PrivacyScreen from './src/screens/client/PrivacyScreen';
@@ -40,6 +43,7 @@ const getInitialRoute = (user, profile) => {
       return 'BusinessHome';
     case 'repartidor':
       return 'DriverHome';
+    case 'admin':
     case 'superadmin':
       return 'AdminDashboard';
     default:
@@ -106,6 +110,9 @@ export default function App() {
           <Stack.Screen name="DriverHome" component={DriverHomeScreen} />
           <Stack.Screen name="DriverProfile" component={DriverProfileScreen} />
           <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+          <Stack.Screen name="AdminFinance" component={AdminFinanceScreen} />
+          <Stack.Screen name="AdminActivity" component={AdminActivityScreen} />
+          <Stack.Screen name="AdminChatAudit" component={AdminChatAuditScreen} />
           <Stack.Screen name="Support" component={SupportTickets} />
           <Stack.Screen name="About" component={AboutScreen} />
           <Stack.Screen name="Privacy" component={PrivacyScreen} />

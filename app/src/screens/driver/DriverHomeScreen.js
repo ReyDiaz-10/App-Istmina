@@ -1,7 +1,7 @@
 // app/src/screens/driver/DriverHomeScreen.js
 import React, { useState, useEffect } from 'react';
 import {
-  StyleSheet, View, Text, FlatList,
+  StyleSheet, View, Text, FlatList, Linking,
   ActivityIndicator, Alert, Switch, SafeAreaView
 } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
@@ -11,12 +11,16 @@ import { useRoleTheme } from '../../hooks/useRoleTheme';
 import HelpButton from '../../components/HelpButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { useAuthStore } from '../../store/authStore';
+import { formatCOP } from '../../utils/formatters';
+import DriverPayoutWalletCard from '../../components/DriverPayoutWalletCard';
+import { usePreferencesStore } from '../../store/preferencesStore';
 
 const DriverHomeScreen = ({ navigation }) => {
   const { profile } = useAuthStore();
   const signOut = useAuthStore((state) => state.signOut);
   const theme = useRoleTheme();
   const { colors } = useAppTheme();
+  const locale = usePreferencesStore((state) => state.language);
 
   // Estados de Datos
   const [driverData, setDriverData] = useState(null);
@@ -62,8 +66,7 @@ const DriverHomeScreen = ({ navigation }) => {
     }
   };
 
-  const toggleAvailability = async (value) => {
-    if (driverData?.verification_status !== 'aprobado') {
+  const toggleAvailability = async (value) => {    if (driverData?.verification_status !== 'aprobado') {
       Alert.alert('Verificación pendiente', 'Tu perfil debe ser aprobado antes de conectarte.');
       return;
     }
@@ -150,6 +153,16 @@ const DriverHomeScreen = ({ navigation }) => {
     }
   };
 
+  const openDeliveryLocation = async (order) => {
+    if (order.delivery_latitude == null || order.delivery_longitude == null) return;
+    const coordinates = encodeURIComponent(`${order.delivery_latitude},${order.delivery_longitude}`);
+    try {
+      await Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${coordinates}`);
+    } catch (error) {
+      Alert.alert('No se pudo abrir el mapa', error.message);
+    }
+  };
+
   const handleSignOut = async () => {
     Alert.alert('Cerrar sesión', '¿Quieres cerrar la sesión?', [
       { text: 'Cancelar', style: 'cancel' },
@@ -168,7 +181,9 @@ const DriverHomeScreen = ({ navigation }) => {
       <View style={styles.orderInfo}>
         <Text style={styles.storeName}>📦 Recoger en: {item.businesses?.store_name}</Text>
         <Text style={styles.addressText}>📍 {item.businesses?.address}</Text>
-        <Text style={styles.amountText}>💰 Ganancia: ${item.total_amount * 0.05}</Text>
+        <Text style={styles.amountText}>
+          Ganancia (100% del domicilio): {formatCOP(item.delivery_fee_cop)}
+        </Text>
       </View>
       <AnimatedButton
         title="Aceptar"
@@ -192,7 +207,7 @@ const DriverHomeScreen = ({ navigation }) => {
       {/* HEADER DE DISPONIBILIDAD */}
       <View style={styles.header}>
         <View>
-          <Text style={[styles.welcomeText, { color: colors.text }]}>Hola, Repartidor</Text>
+          <Text style={[styles.welcomeText, { color: colors.text }]}>Hola, {profile?.full_name || 'Repartidor'}</Text>
           <Text style={[styles.statusText, { color: colors.muted }]}>
             Estado: {driverData?.verification_status !== 'aprobado'
               ? 'Pendiente de aprobación'
@@ -207,6 +222,8 @@ const DriverHomeScreen = ({ navigation }) => {
           thumbColor={'#fff'}
         />
       </View>
+
+      {driverData?.verification_status === 'aprobado' ? <DriverPayoutWalletCard locale={locale} /> : null}
 
       {driverData?.verification_status !== 'aprobado' && (
         <View style={[styles.offlineBox, styles.pendingBox]}>
@@ -233,6 +250,31 @@ const DriverHomeScreen = ({ navigation }) => {
 
             <Text style={styles.detailLabel}>Entregar a:</Text>
             <Text style={styles.detailValue}>{activeOrder.profiles?.full_name}</Text>
+            <AnimatedButton
+              title="Abrir chat con el cliente"
+              variant="secondary"
+              onPress={() => navigation.navigate('OrderChat', { orderId: activeOrder.id })}
+            />
+            <Text style={styles.detailLabel}>Destino:</Text>
+            {activeOrder.delivery_latitude != null && activeOrder.delivery_longitude != null ? (
+              <>
+                <Text style={styles.detailValue}>
+                  {activeOrder.delivery_latitude}, {activeOrder.delivery_longitude}
+                </Text>
+                <AnimatedButton
+                  title="Abrir ubicación en mapas"
+                  onPress={() => openDeliveryLocation(activeOrder)}
+                  variant="secondary"
+                />
+              </>
+            ) : (
+              <Text style={styles.detailValue}>
+                Coordina la dirección con el cliente por el chat del pedido.
+              </Text>
+            )}
+            <Text style={styles.detailLabel}>
+              Tu ganancia por domicilio: {formatCOP(activeOrder.delivery_fee_cop)}
+            </Text>
             <OrderStatusAnimation status={activeOrder.status} />
             <AnimatedButton
               title="Marcar como Entregado"

@@ -20,6 +20,7 @@ export default function ClientProfileScreen({ navigation }) {
   const profile = useAuthStore((state) => state.profile);
   const updateProfileDetails = useAuthStore((state) => state.updateProfileDetails);
   const requestEmailChange = useAuthStore((state) => state.requestEmailChange);
+  const updatePassword = useAuthStore((state) => state.updatePassword);
   const loading = useAuthStore((state) => state.loading);
   const { colors } = useAppTheme();
   const [fullName, setFullName] = useState(profile?.full_name || '');
@@ -27,6 +28,8 @@ export default function ClientProfileScreen({ navigation }) {
   const [phone, setPhone] = useState(profile?.phone || '');
   const [email, setEmail] = useState(user?.email || '');
   const [feedback, setFeedback] = useState(null);
+  const [password, setPassword] = useState('');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
 
   useEffect(() => {
     setFullName(profile?.full_name || '');
@@ -70,6 +73,19 @@ export default function ClientProfileScreen({ navigation }) {
           : 'El correo de tu cuenta fue actualizado.'
         : result.error || 'No se pudo solicitar el cambio de correo.',
     });
+  };
+
+  const handleChangePassword = async () => {
+    if (password !== passwordConfirmation) {
+      setFeedback({ type: 'error', text: 'Las contraseñas no coinciden.' });
+      return;
+    }
+    const result = await updatePassword(password);
+    setFeedback({
+      type: result.success ? 'success' : 'error',
+      text: result.success ? 'La contraseña se actualizó correctamente.' : result.error || 'No se pudo actualizar la contraseña.',
+    });
+    if (result.success) { setPassword(''); setPasswordConfirmation(''); }
   };
 
   const renderInput = (label, value, onChangeText, options = {}) => (
@@ -118,6 +134,16 @@ export default function ClientProfileScreen({ navigation }) {
           autoCapitalize: 'none',
           accessibilityLabel: 'Correo electrónico',
         })}
+        {renderInput('Nueva contraseña', password, setPassword, {
+          secureTextEntry: true,
+          autoCapitalize: 'none',
+          accessibilityLabel: 'Nueva contraseña',
+        })}
+        {renderInput('Confirmar nueva contraseña', passwordConfirmation, setPasswordConfirmation, {
+          secureTextEntry: true,
+          autoCapitalize: 'none',
+          accessibilityLabel: 'Confirmar nueva contraseña',
+        })}
 
         {feedback ? (
           <Text
@@ -139,6 +165,12 @@ export default function ClientProfileScreen({ navigation }) {
             <AnimatedButton
               title="Solicitar cambio de correo"
               onPress={handleChangeEmail}
+              variant="secondary"
+              style={styles.action}
+            />
+            <AnimatedButton
+              title="Actualizar contraseña"
+              onPress={handleChangePassword}
               variant="secondary"
               style={styles.action}
             />
