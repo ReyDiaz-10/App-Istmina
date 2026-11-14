@@ -42,7 +42,9 @@ export async function uploadRegistrationMedia({
     const { error } = await supabase
       .from('businesses')
       .update({ store_image_url: publicUrl })
-      .eq('id', business.id);
+      .eq('id', business.id)
+      .select('id')
+      .single();
     if (error) throw error;
     uploadedBusinessImageUrl = publicUrl;
   }
@@ -62,10 +64,16 @@ export async function uploadRegistrationMedia({
     if (driverPhotoUri) {
       const facePath = await uploadImage('profile-media', userId, 'avatar', driverPhotoUri);
       const [profileResult, verificationResult] = await Promise.all([
-        supabase.from('profiles').update({ avatar_url: facePath }).eq('id', userId),
+        supabase.from('profiles')
+          .update({ avatar_url: facePath })
+          .eq('id', userId)
+          .select('id')
+          .single(),
         supabase.from('driver_verifications')
           .update({ face_photo_attested: true })
-          .eq('driver_id', driver.id),
+          .eq('driver_id', driver.id)
+          .select('driver_id')
+          .single(),
       ]);
       if (profileResult.error) throw profileResult.error;
       if (verificationResult.error) throw verificationResult.error;
@@ -75,7 +83,9 @@ export async function uploadRegistrationMedia({
       const platePath = await uploadImage('driver-documents', userId, 'plate', platePhotoUri);
       const { error } = await supabase.from('driver_verifications')
         .update({ plate_photo_path: platePath })
-        .eq('driver_id', driver.id);
+        .eq('driver_id', driver.id)
+        .select('driver_id')
+        .single();
       if (error) throw error;
     }
   }
@@ -112,10 +122,16 @@ export async function uploadDriverPhoto({ userId, uri }) {
   const path = await uploadImage('profile-media', userId, 'avatar', uri);
 
   const [profileResult, verificationResult] = await Promise.all([
-    supabase.from('profiles').update({ avatar_url: path }).eq('id', userId),
+    supabase.from('profiles')
+      .update({ avatar_url: path })
+      .eq('id', userId)
+      .select('id')
+      .single(),
     supabase.from('driver_verifications')
       .update({ face_photo_attested: true })
-      .eq('driver_id', driver.id),
+      .eq('driver_id', driver.id)
+      .select('driver_id')
+      .single(),
   ]);
   if (profileResult.error) throw profileResult.error;
   if (verificationResult.error) throw verificationResult.error;
@@ -137,7 +153,9 @@ export async function uploadDriverPlatePhoto({ userId, uri }) {
 
   const { error } = await supabase.from('driver_verifications')
     .update({ plate_photo_path: path })
-    .eq('driver_id', driver.id);
+    .eq('driver_id', driver.id)
+    .select('driver_id')
+    .single();
   if (error) throw error;
   return path;
 }
@@ -157,7 +175,9 @@ export async function uploadDriverIdentityPhoto({ userId, uri }) {
 
   const { error } = await supabase.from('driver_verifications')
     .update({ identity_document_path: path })
-    .eq('driver_id', driver.id);
+    .eq('driver_id', driver.id)
+    .select('driver_id')
+    .single();
   if (error) throw error;
   return path;
 }

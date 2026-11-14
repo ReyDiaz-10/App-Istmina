@@ -42,7 +42,13 @@ const ClientHomeScreen = ({ navigation }) => {
   const isEnglish = language === 'en';
   const hour = new Date().getHours();
   const greeting = t(hour < 12 ? 'home.goodMorning' : hour < 18 ? 'home.goodAfternoon' : 'home.goodEvening');
-  const displayName = (profile?.full_name || user?.user_metadata?.full_name || '').trim();
+  const displayName = (
+    profile?.nickname
+    || profile?.full_name
+    || user?.user_metadata?.nickname
+    || user?.user_metadata?.full_name
+    || ''
+  ).trim();
 
   useEffect(() => {
     const fetchBusinesses = async () => {

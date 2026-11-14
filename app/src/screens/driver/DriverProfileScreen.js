@@ -31,6 +31,8 @@ const DriverProfileScreen = () => {
   const [platePhotoUrl, setPlatePhotoUrl] = useState(null);
   const [identityPhotoUrl, setIdentityPhotoUrl] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [feedback, setFeedback] = useState(null);
   const [vehicle, setVehicle] = useState('');
   const [plateNumber, setPlateNumber] = useState('');
 
@@ -66,7 +68,7 @@ const DriverProfileScreen = () => {
       setVehicle(driver.vehicle_type || '');
       setPlateNumber(driver.plate_number || '');
     } catch (error) {
-      Alert.alert('No se pudo cargar el perfil', error.message);
+      setFeedback({ type: 'error', text: `No se pudo cargar el perfil: ${error.message}` });
     }
   }, [profile?.id]);
 
@@ -75,6 +77,7 @@ const DriverProfileScreen = () => {
   }, [loadDriverProfile]);
 
   const uploadDocument = async (type) => {
+    setFeedback(null);
     try {
       const pickerOptions = {
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -95,15 +98,22 @@ const DriverProfileScreen = () => {
       }[type];
       await mediaUpload({ userId: profile.id, uri: result.assets[0].uri });
       await loadDriverProfile();
-      Alert.alert('Foto cargada', 'La imagen quedó guardada de forma privada para revisión.');
+      setFeedback({ type: 'success', text: 'La imagen quedó guardada de forma privada para revisión.' });
     } catch (error) {
-      Alert.alert('No se pudo cargar la foto', error.message);
+      setFeedback({ type: 'error', text: `No se pudo cargar la foto: ${error.message}` });
     } finally {
       setUploading(false);
     }
   };
 
   const saveTextData = async () => {
+    setFeedback(null);
+    if (!vehicle.trim() || !plateNumber.trim()) {
+      setFeedback({ type: 'error', text: 'Completa el tipo de vehículo y la placa.' });
+      return;
+    }
+
+    setSavingProfile(true);
     try {
       if (driverData.verification_status === 'aprobado') {
         Alert.alert('Cambios restringidos', 'Contacta a SuperAdmin para modificar la información de un perfil aprobado.');
@@ -113,19 +123,24 @@ const DriverProfileScreen = () => {
       const { error } = await supabase
         .from('drivers')
         .update({ vehicle_type: vehicle.trim(), plate_number: plateNumber.trim().toUpperCase() })
-        .eq('profile_id', profile.id);
+        .eq('profile_id', profile.id)
+        .select('id')
+        .single();
       if (error) throw error;
       await loadDriverProfile();
-      Alert.alert('Datos actualizados', 'Los cambios quedaron guardados.');
+      setFeedback({ type: 'success', text: 'Los datos del vehículo quedaron guardados.' });
     } catch (error) {
-      Alert.alert('No se pudieron guardar los datos', error.message);
+      setFeedback({ type: 'error', text: `No se pudieron guardar los datos: ${error.message}` });
+    } finally {
+      setSavingProfile(false);
     }
   };
 
   const resubmitVerification = async () => {
+    setFeedback(null);
     try {
       if (!profileData?.avatar_url || !verification.plate_photo_path) {
-        Alert.alert('Faltan fotos', 'Carga una foto del rostro y una foto legible de la placa antes de reenviar.');
+        setFeedback({ type: 'error', text: 'Carga una foto del rostro y una foto legible de la placa antes de reenviar.' });
         return;
       }
 
@@ -135,9 +150,9 @@ const DriverProfileScreen = () => {
       });
       if (error) throw error;
       await loadDriverProfile();
-      Alert.alert('Enviado a revisión', 'El equipo revisará nuevamente tu perfil.');
+      setFeedback({ type: 'success', text: 'El equipo revisará nuevamente tu perfil.' });
     } catch (error) {
-      Alert.alert('No se pudo reenviar el perfil', error.message);
+      setFeedback({ type: 'error', text: `No se pudo reenviar el perfil: ${error.message}` });
     }
   };
 
@@ -169,6 +184,14 @@ const DriverProfileScreen = () => {
         <Text style={styles.note}>
           No podrás conectarte para recibir pedidos hasta que SuperAdmin apruebe tu perfil.
         </Text>
+        {feedback ? (
+          <Text
+            accessibilityRole="alert"
+            style={[styles.feedback, { color: feedback.type === 'success' ? '#237A3B' : '#B3261E' }]}
+          >
+            {feedback.text}
+          </Text>
+        ) : null}
         {verification.review_note
           ? <Text style={styles.reviewNote}>Observación: {verification.review_note}</Text>
           : null}
@@ -206,9 +229,9 @@ const DriverProfileScreen = () => {
           editable={driverData.verification_status !== 'aprobado'}
         />
         <AnimatedButton
-          title="Guardar datos"
+          title={savingProfile ? 'Guardando...' : 'Guardar datos'}
           onPress={saveTextData}
-          disabled={driverData.verification_status === 'aprobado'}
+          disabled={savingProfile || driverData.verification_status === 'aprobado'}
           style={styles.fullButton}
         />
       </View>
@@ -272,6 +295,7 @@ const styles = StyleSheet.create({
   userName: { fontSize: 22, fontWeight: '700', color: '#1A237E', marginTop: 10 },
   status: { fontSize: 15, fontWeight: '700', color: '#8A5A00', marginTop: 8 },
   note: { color: '#5F6368', textAlign: 'center', lineHeight: 20, marginVertical: 8 },
+  feedback: { fontSize: 14, lineHeight: 20, fontWeight: '600', textAlign: 'center', marginVertical: 8 },
   reviewNote: { color: '#8A3B12', textAlign: 'center', lineHeight: 20, marginBottom: 8 },
   section: { paddingHorizontal: 20, paddingVertical: 12 },
   sectionTitle: { fontSize: 18, fontWeight: '700', color: '#333333', marginBottom: 14 },

@@ -29,7 +29,7 @@ export const useAuthStore = create((set, get) => ({
     }
   },
 
-  updateProfileDetails: async ({ fullName, username, phone }) => {
+  updateProfileDetails: async ({ fullName, nickname, phone }) => {
     set({ loading: true });
     try {
       const userId = get().user?.id;
@@ -38,7 +38,7 @@ export const useAuthStore = create((set, get) => ({
         .from('profiles')
         .update({
           full_name: fullName.trim(),
-          username: username.trim().toLowerCase(),
+          nickname: nickname.trim(),
           phone: phone.trim(),
         })
         .eq('id', userId)

@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
@@ -14,7 +13,6 @@ import AnimatedButton from '../../components/AnimatedButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { useAuthStore } from '../../store/authStore';
 
-const USERNAME_PATTERN = /^[a-z0-9_]{3,24}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function ClientProfileScreen({ navigation }) {
@@ -25,59 +23,53 @@ export default function ClientProfileScreen({ navigation }) {
   const loading = useAuthStore((state) => state.loading);
   const { colors } = useAppTheme();
   const [fullName, setFullName] = useState(profile?.full_name || '');
-  const [username, setUsername] = useState(profile?.username || '');
+  const [nickname, setNickname] = useState(profile?.nickname || '');
   const [phone, setPhone] = useState(profile?.phone || '');
   const [email, setEmail] = useState(user?.email || '');
+  const [feedback, setFeedback] = useState(null);
 
   useEffect(() => {
     setFullName(profile?.full_name || '');
-    setUsername(profile?.username || '');
+    setNickname(profile?.nickname || '');
     setPhone(profile?.phone || '');
     setEmail(user?.email || '');
   }, [profile, user]);
 
   const handleSaveProfile = async () => {
-    const normalizedUsername = username.trim().toLowerCase();
-    if (!fullName.trim() || !phone.trim()) {
-      Alert.alert('Datos incompletos', 'El nombre y el teléfono son obligatorios.');
-      return;
-    }
-    if (!USERNAME_PATTERN.test(normalizedUsername)) {
-      Alert.alert('Usuario inválido', 'Usa de 3 a 24 letras minúsculas, números o guion bajo.');
+    if (!fullName.trim() || !nickname.trim() || !phone.trim()) {
+      setFeedback({ type: 'error', text: 'Completa tu nombre completo, apodo y teléfono.' });
       return;
     }
 
-    const result = await updateProfileDetails({ fullName, username: normalizedUsername, phone });
-    Alert.alert(
-      result.success ? 'Perfil actualizado' : 'No se pudo actualizar',
-      result.success
-        ? 'Guardamos tu nombre, usuario y teléfono.'
-        : result.error.includes('profiles_username_lower_idx')
-          ? 'Ese nombre de usuario ya está en uso.'
-          : result.error,
-    );
+    const result = await updateProfileDetails({ fullName, nickname, phone });
+    setFeedback({
+      type: result.success ? 'success' : 'error',
+      text: result.success
+        ? 'Tu nombre, apodo y teléfono quedaron guardados.'
+        : result.error || 'No se pudo guardar el perfil.',
+    });
   };
 
   const handleChangeEmail = async () => {
     const normalizedEmail = email.trim().toLowerCase();
     if (!EMAIL_PATTERN.test(normalizedEmail)) {
-      Alert.alert('Correo inválido', 'Ingresa una dirección de correo válida.');
+      setFeedback({ type: 'error', text: 'Ingresa una dirección de correo válida.' });
       return;
     }
     if (normalizedEmail === user?.email?.toLowerCase()) {
-      Alert.alert('Sin cambios', 'Ese ya es el correo asociado a tu cuenta.');
+      setFeedback({ type: 'error', text: 'Ese ya es el correo asociado a tu cuenta.' });
       return;
     }
 
     const result = await requestEmailChange(normalizedEmail);
-    Alert.alert(
-      result.success ? 'Solicitud enviada' : 'No se pudo cambiar el correo',
-      result.success
+    setFeedback({
+      type: result.success ? 'success' : 'error',
+      text: result.success
         ? result.confirmationRequired
-          ? 'Confirma el cambio desde el enlace enviado a tu nuevo correo.'
+          ? 'Solicitud enviada. Confirma el cambio desde el enlace enviado a tu nuevo correo.'
           : 'El correo de tu cuenta fue actualizado.'
-        : result.error,
-    );
+        : result.error || 'No se pudo solicitar el cambio de correo.',
+    });
   };
 
   const renderInput = (label, value, onChangeText, options = {}) => (
@@ -112,11 +104,11 @@ export default function ClientProfileScreen({ navigation }) {
           autoCapitalize: 'words',
           accessibilityLabel: 'Nombre completo',
         })}
-        {renderInput('Nombre de usuario', username, (value) => setUsername(value.toLowerCase()), {
-          autoCapitalize: 'none',
-          accessibilityLabel: 'Nombre de usuario',
+        {renderInput('Apodo o ¿cómo quieres que te llamemos?', nickname, setNickname, {
+          autoCapitalize: 'words',
+          accessibilityLabel: 'Apodo o cómo quieres que te llamemos',
         })}
-        <Text style={[styles.hint, { color: colors.muted }]}>De 3 a 24 caracteres: letras, números y guion bajo.</Text>
+        <Text style={[styles.hint, { color: colors.muted }]}>Este nombre aparecerá en tu saludo de bienvenida.</Text>
         {renderInput('Teléfono', phone, setPhone, {
           keyboardType: 'phone-pad',
           accessibilityLabel: 'Teléfono',
@@ -126,6 +118,18 @@ export default function ClientProfileScreen({ navigation }) {
           autoCapitalize: 'none',
           accessibilityLabel: 'Correo electrónico',
         })}
+
+        {feedback ? (
+          <Text
+            accessibilityRole="alert"
+            style={[
+              styles.feedback,
+              { color: feedback.type === 'success' ? colors.primary : colors.danger || '#B3261E' },
+            ]}
+          >
+            {feedback.text}
+          </Text>
+        ) : null}
 
         {loading ? (
           <ActivityIndicator color={colors.primary} style={styles.loader} />
@@ -160,6 +164,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 14, fontWeight: '700', marginBottom: 6 },
   input: { borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 16 },
   hint: { fontSize: 12, marginTop: 6 },
+  feedback: { fontSize: 14, lineHeight: 20, fontWeight: '600', marginTop: 16 },
   action: { alignSelf: 'stretch', marginTop: 16 },
   loader: { marginTop: 22 },
 });

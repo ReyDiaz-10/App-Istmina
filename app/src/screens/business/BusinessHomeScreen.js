@@ -49,6 +49,9 @@ const BusinessHomeScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [uploadingBusinessPhoto, setUploadingBusinessPhoto] = useState(false);
+  const [savingVerification, setSavingVerification] = useState(false);
+  const [verificationFeedback, setVerificationFeedback] = useState(null);
+  const [photoFeedback, setPhotoFeedback] = useState(null);
 
   // Estados de Interfaz (UI)
   const [modalVisible, setModalVisible] = useState(false);
@@ -226,24 +229,26 @@ const BusinessHomeScreen = ({ navigation }) => {
       setUploadingBusinessPhoto(true);
       const imageUrl = await uploadBusinessPhoto({ userId: profile.id, uri: result.assets[0].uri });
       setBusiness((current) => ({ ...current, store_image_url: imageUrl }));
-      Alert.alert('Foto actualizada', 'La imagen real del local ya aparece en tu perfil.');
+      setPhotoFeedback({ type: 'success', text: 'La foto del local quedó guardada.' });
     } catch (error) {
-      Alert.alert('No se pudo actualizar la foto', error.message);
+      setPhotoFeedback({ type: 'error', text: `No se pudo guardar la foto: ${error.message}` });
     } finally {
       setUploadingBusinessPhoto(false);
     }
   };
 
   const saveVerificationDetails = async () => {
+    setVerificationFeedback(null);
+    setSavingVerification(true);
     try {
       if (!verification?.legal_name?.trim()
         || !verification?.registration_id?.trim()
         || !verification?.complaint_email?.trim()) {
-        Alert.alert('Datos incompletos', 'Completa razón social, identificación y correo de contacto.');
+        setVerificationFeedback({ type: 'error', text: 'Completa razón social, identificación y correo de contacto.' });
         return;
       }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verification.complaint_email.trim())) {
-        Alert.alert('Correo inválido', 'Ingresa un correo válido para recibir quejas y solicitudes.');
+        setVerificationFeedback({ type: 'error', text: 'Ingresa un correo válido para recibir quejas y solicitudes.' });
         return;
       }
 
@@ -258,13 +263,17 @@ const BusinessHomeScreen = ({ navigation }) => {
           reviewed_by: null,
           reviewed_at: null,
         })
-        .eq('business_id', business.id);
+        .eq('business_id', business.id)
+        .select('business_id')
+        .single();
       if (error) throw error;
 
       if (business.status === 'fuera_de_servicio') {
         const { error: statusError } = await supabase.from('businesses')
           .update({ status: 'inactivo' })
-          .eq('id', business.id);
+          .eq('id', business.id)
+          .select('id')
+          .single();
         if (statusError) throw statusError;
         setBusiness((current) => ({ ...current, status: 'inactivo' }));
       }
@@ -277,9 +286,11 @@ const BusinessHomeScreen = ({ navigation }) => {
         reviewed_by: null,
         reviewed_at: null,
       }));
-      Alert.alert('Enviado a revisión', 'El equipo de IstmiYa revisará los datos actualizados.');
+      setVerificationFeedback({ type: 'success', text: 'Datos guardados. El equipo de IstmiYa revisará el perfil.' });
     } catch (error) {
-      Alert.alert('No se pudieron guardar los datos', error.message);
+      setVerificationFeedback({ type: 'error', text: `No se pudieron guardar los datos: ${error.message}` });
+    } finally {
+      setSavingVerification(false);
     }
   };
 
@@ -382,10 +393,22 @@ const BusinessHomeScreen = ({ navigation }) => {
                 ? <Text style={[styles.verificationText, { color: colors.muted }]}>Observación: {verification.review_note}</Text>
                 : null}
               <AnimatedButton
-                title="Guardar y enviar a revisión"
+                title={savingVerification ? 'Guardando...' : 'Guardar y enviar a revisión'}
                 onPress={saveVerificationDetails}
+                disabled={savingVerification}
                 style={styles.photoButton}
               />
+              {verificationFeedback ? (
+                <Text
+                  accessibilityRole="alert"
+                  style={[
+                    styles.actionFeedback,
+                    { color: verificationFeedback.type === 'success' ? colors.primary : '#B3261E' },
+                  ]}
+                >
+                  {verificationFeedback.text}
+                </Text>
+              ) : null}
             </View>
           )}
           {business?.store_image_url
@@ -398,6 +421,17 @@ const BusinessHomeScreen = ({ navigation }) => {
             disabled={uploadingBusinessPhoto}
             style={styles.photoButton}
           />
+          {photoFeedback ? (
+            <Text
+              accessibilityRole="alert"
+              style={[
+                styles.actionFeedback,
+                { color: photoFeedback.type === 'success' ? colors.primary : '#B3261E' },
+              ]}
+            >
+              {photoFeedback.text}
+            </Text>
+          ) : null}
         </View>
 
         <WalletCard
@@ -526,6 +560,7 @@ const styles = StyleSheet.create({
   verificationText: { fontSize: 14, lineHeight: 20, marginBottom: 12 },
   storeImage: { width: '100%', height: 170, borderRadius: 12, marginBottom: 10 },
   photoButton: { alignSelf: 'stretch' },
+  actionFeedback: { fontSize: 14, lineHeight: 20, fontWeight: '600', marginTop: 10 },
   verificationInput: { borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8 },
   identificationTypeRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   identificationType: { flex: 1, alignSelf: 'stretch' },

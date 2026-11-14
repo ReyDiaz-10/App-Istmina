@@ -7,7 +7,6 @@ import {
   TextInput, 
   Image,
   ActivityIndicator, 
-  Alert, 
   KeyboardAvoidingView, 
   Platform, 
   ScrollView 
@@ -38,6 +37,8 @@ const RegisterScreen = ({ navigation, route }) => {
   });
   const [photos, setPhotos] = useState({ business: null, face: null, plate: null });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [notice, setNotice] = useState(null);
+  const [nextScreen, setNextScreen] = useState(null);
 
   const { signUp, loading } = useAuthStore();
   const { colors } = useAppTheme();
@@ -61,20 +62,22 @@ const RegisterScreen = ({ navigation, route }) => {
         setPhotos((current) => ({ ...current, [target]: result.assets[0].uri }));
       }
     } catch (error) {
-      Alert.alert('No se pudo seleccionar la foto', error.message);
+      setNotice({ type: 'error', text: `No se pudo seleccionar la foto: ${error.message}` });
     }
   };
 
   const handleRegister = async () => {
+    setNotice(null);
+    setNextScreen(null);
     const { fullName, phone, email, password } = formData;
     
     if (![fullName, phone, email, password].every((value) => value.trim())) {
-      Alert.alert('Campos Incompletos', 'Por favor, llena todos los campos.');
+      setNotice({ type: 'error', text: 'Por favor, llena todos los campos obligatorios.' });
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert('Contraseña Débil', 'La contraseña debe tener al menos 6 caracteres.');
+      setNotice({ type: 'error', text: 'La contraseña debe tener al menos 6 caracteres.' });
       return;
     }
 
@@ -87,18 +90,18 @@ const RegisterScreen = ({ navigation, route }) => {
         formData.complaintEmail,
       ];
       if (!businessFields.every((value) => value.trim()) || !photos.business) {
-        Alert.alert('Datos del negocio incompletos', 'Completa los datos legales y selecciona una foto real del local.');
+        setNotice({ type: 'error', text: 'Completa los datos legales y selecciona una foto del local.' });
         return;
       }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.complaintEmail.trim())) {
-        Alert.alert('Correo inválido', 'Ingresa un correo válido para recibir quejas y solicitudes.');
+        setNotice({ type: 'error', text: 'Ingresa un correo válido para recibir quejas y solicitudes.' });
         return;
       }
     }
 
     if (formData.role === 'repartidor') {
       if (!formData.vehicleType.trim() || !formData.plateNumber.trim() || !photos.face || !photos.plate) {
-        Alert.alert('Datos del repartidor incompletos', 'Indica vehículo y placa, toma una foto de tu rostro y una foto de la placa.');
+        setNotice({ type: 'error', text: 'Indica el vehículo y la placa, y selecciona las fotos requeridas.' });
         return;
       }
     }
@@ -107,16 +110,16 @@ const RegisterScreen = ({ navigation, route }) => {
     try {
       const result = await signUp(formData);
       if (!result.success) {
-        Alert.alert('Error', result.error || 'Ocurrió un problema al crear la cuenta.');
+        setNotice({ type: 'error', text: result.error || 'Ocurrió un problema al crear la cuenta.' });
         return;
       }
 
       if (result.requiresEmailConfirmation) {
-        Alert.alert(
-          'Confirma tu correo',
-          'La cuenta se creó. Confirma el correo y luego inicia sesión para completar o revisar la verificación de tu perfil.',
-          [{ text: 'Ir a iniciar sesión', onPress: () => navigation.reset({ index: 0, routes: [{ name: 'Login' }] }) }],
-        );
+        setNotice({
+          type: 'success',
+          text: 'La cuenta se creó. Confirma tu correo y luego inicia sesión para revisar tu perfil y completar la carga de fotos.',
+        });
+        setNextScreen({ name: 'Login', label: 'Ir a iniciar sesión' });
         return;
       }
 
@@ -141,21 +144,19 @@ const RegisterScreen = ({ navigation, route }) => {
       const allowedRoutes = ['Cart', 'StoreDetail'];
       const destination = roleRoute
         || (allowedRoutes.includes(returnTo) ? returnTo : 'ClientHome');
-      Alert.alert(
-        'Cuenta creada',
-        formData.role === 'cliente'
+      setNotice({
+        type: photoWarning ? 'error' : 'success',
+        text: formData.role === 'cliente'
           ? `Tu cuenta está lista.${photoWarning}`
           : `Tu perfil quedó pendiente de revisión por el equipo de IstmiYa.${photoWarning}`,
-        [{
-          text: 'Continuar',
-          onPress: () => navigation.reset({
-            index: 0,
-            routes: [{ name: destination, params: roleRoute ? undefined : returnParams }],
-          }),
-        }],
-      );
+      });
+      setNextScreen({
+        name: destination,
+        params: roleRoute ? undefined : returnParams,
+        label: 'Continuar',
+      });
     } catch (error) {
-      Alert.alert('Error', error.message || 'Ocurrió un problema al crear la cuenta.');
+      setNotice({ type: 'error', text: error.message || 'Ocurrió un problema al crear la cuenta.' });
     } finally {
       setIsSubmitting(false);
     }
@@ -318,17 +319,42 @@ const RegisterScreen = ({ navigation, route }) => {
 
           {renderRoleFields()}
 
-          {isBusy ? (
-            <ActivityIndicator color="#1A237E" style={styles.loadingIndicator} />
-          ) : (
+          {notice ? (
+            <Text
+              accessibilityRole="alert"
+              style={[
+                styles.notice,
+                { color: notice.type === 'success' ? colors.primary : '#B3261E' },
+              ]}
+            >
+              {notice.text}
+            </Text>
+          ) : null}
+
+          {nextScreen ? (
             <AnimatedButton
-              title="Crear Cuenta"
-              onPress={handleRegister}
+              title={nextScreen.label}
+              onPress={() => navigation.reset({
+                index: 0,
+                routes: [{ name: nextScreen.name, params: nextScreen.params }],
+              })}
               style={styles.animatedButton}
-              buttonStyle={styles.button}
-              textStyle={styles.buttonText}
             />
-          )}
+          ) : null}
+
+          {!nextScreen ? (
+            isBusy ? (
+              <ActivityIndicator color="#1A237E" style={styles.loadingIndicator} />
+            ) : (
+              <AnimatedButton
+                title="Crear Cuenta"
+                onPress={handleRegister}
+                style={styles.animatedButton}
+                buttonStyle={styles.button}
+                textStyle={styles.buttonText}
+              />
+            )
+          ) : null}
 
           <AnimatedButton
             title="¿Ya tienes cuenta? Inicia sesión"
@@ -396,6 +422,7 @@ const styles = StyleSheet.create({
     borderColor: '#E0E0E0' 
   },
   helperText: { fontSize: 13, lineHeight: 18, marginTop: 8 },
+  notice: { fontSize: 14, lineHeight: 20, fontWeight: '600', marginTop: 12 },
   photoPicker: { marginTop: 8 },
   photoPreview: { width: '100%', height: 170, borderRadius: 12, marginBottom: 8 },
   photoAction: { alignSelf: 'stretch' },
