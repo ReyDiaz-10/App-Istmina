@@ -10,17 +10,28 @@
       "@livekit/react-native-expo-plugin",
       "@config-plugins/react-native-webrtc",
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraProguardRules": "-dontwarn livekit.org.jni_zero.JniZeroJni"
+          }
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/istmiya-adaptive-foreground.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#FFF4E2"
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "IstmiYa usa tu ubicación solo para calcular el domicilio y coordinar tu pedido."
         }
       ]
     ],
-    "splash": {
-      "image": "./assets/images/istmiya-adaptive-foreground.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FFF4E2"
-    },
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -35,6 +46,8 @@
       "package": "com.reydiaz10.istmiya"
     },
     "web": {
+      "bundler": "metro",
+      "output": "static",
       "favicon": "./assets/images/istmiya-marketplace-icon.png"
     },
     "platforms": [
