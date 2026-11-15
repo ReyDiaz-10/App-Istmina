@@ -1,5 +1,6 @@
+import { AppText as Text } from '../../components/AppText.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 import { AudioSession, LiveKitRoom, useConnectionState, useParticipants } from '@livekit/react-native';
 import AnimatedButton from '../../components/AnimatedButton';
 import { useAppTheme } from '../../hooks/useAppTheme';

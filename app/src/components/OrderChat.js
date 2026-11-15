@@ -1,3 +1,4 @@
+import { AppText as Text, AppTextInput as TextInput } from './AppText.js';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -8,8 +9,6 @@ import {
   Platform,
   Pressable,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
 import { supabase } from '../api/supabaseClient';

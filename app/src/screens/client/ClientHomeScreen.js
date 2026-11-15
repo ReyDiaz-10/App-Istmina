@@ -1,3 +1,4 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -5,8 +6,6 @@ import {
   Image,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';

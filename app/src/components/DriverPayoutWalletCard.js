@@ -1,5 +1,6 @@
+import { AppText as Text } from './AppText.js';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 import { supabase } from '../api/supabaseClient';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { formatCOP } from '../utils/formatters';

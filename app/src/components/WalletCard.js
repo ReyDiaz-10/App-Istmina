@@ -1,5 +1,6 @@
+import { AppText as Text } from './AppText.js';
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import AnimatedButton from './AnimatedButton';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { usePreferencesStore } from '../store/preferencesStore';

@@ -1,3 +1,4 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -6,8 +7,6 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -85,6 +84,13 @@ const DriverProfileScreen = () => {
         quality: 0.7,
       };
       const useCamera = Platform.OS !== 'web' && type !== 'identity';
+      if (useCamera) {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          setFeedback({ type: 'error', text: 'Permite el acceso a la cámara en los ajustes del dispositivo para tomar esta foto.' });
+          return;
+        }
+      }
       const result = useCamera
         ? await ImagePicker.launchCameraAsync({ ...pickerOptions, aspect: [4, 3] })
         : await ImagePicker.launchImageLibraryAsync({ ...pickerOptions, aspect: [4, 3] });
@@ -116,7 +122,7 @@ const DriverProfileScreen = () => {
     setSavingProfile(true);
     try {
       if (driverData.verification_status === 'aprobado') {
-        Alert.alert('Cambios restringidos', 'Contacta a SuperAdmin para modificar la información de un perfil aprobado.');
+        Alert.alert('Cambios restringidos', 'Contacta al equipo administrador para modificar la información de un perfil aprobado.');
         return;
       }
 
@@ -182,7 +188,7 @@ const DriverProfileScreen = () => {
         <Text style={styles.userName}>{profileData?.full_name}</Text>
         <Text style={styles.status}>{verificationStatus}</Text>
         <Text style={styles.note}>
-          No podrás conectarte para recibir pedidos hasta que SuperAdmin apruebe tu perfil.
+          No podrás conectarte para recibir pedidos hasta que el equipo administrador apruebe tu perfil.
         </Text>
         {feedback ? (
           <Text

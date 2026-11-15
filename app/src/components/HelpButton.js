@@ -1,5 +1,6 @@
+import { AppText as Text } from './AppText.js';
 import React from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 
 export default function HelpButton({ navigation, context, orderId, compact = false }) {
   return (

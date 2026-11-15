@@ -1,5 +1,6 @@
+import { AppText as Text } from '../../components/AppText.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 import { Room, RoomEvent, ConnectionState } from 'livekit-client';
 import AnimatedButton from '../../components/AnimatedButton';
 import { useAppTheme } from '../../hooks/useAppTheme';

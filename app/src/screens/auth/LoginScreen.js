@@ -1,15 +1,14 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/auth/LoginScreen.js
 import React, { useState } from 'react';
 import {
   StyleSheet,
   View,
-  Text,
-  TextInput,
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
-  ScrollView
+  ScrollView,
 } from 'react-native';
 import { useAuthStore } from '../../store/authStore';
 import AnimatedButton from '../../components/AnimatedButton';
@@ -43,7 +42,6 @@ const LoginScreen = ({ navigation, route }) => {
         negocio: 'BusinessHome',
         repartidor: 'DriverHome',
         admin: 'AdminDashboard',
-        superadmin: 'AdminDashboard',
       }[role];
       const allowedRoutes = ['Cart', 'StoreDetail'];
       const destination = roleRoute

@@ -1,3 +1,4 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/client/CartScreen.js
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -8,8 +9,6 @@ import {
   Linking,
   Pressable,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
 import * as Location from 'expo-location';

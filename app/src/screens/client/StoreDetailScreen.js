@@ -1,3 +1,4 @@
+import { AppText as Text } from '../../components/AppText.js';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -6,7 +7,6 @@ import {
   Modal,
   Pressable,
   StyleSheet,
-  Text,
   TouchableOpacity,
   View,
 } from 'react-native';

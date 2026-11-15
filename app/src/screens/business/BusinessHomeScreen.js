@@ -1,3 +1,4 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/business/BusinessHomeScreen.js
 import React, { useState, useEffect } from 'react';
 import {
@@ -7,11 +8,8 @@ import {
   Image,
   Linking,
   Modal,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -23,6 +21,7 @@ import BannerUploader from '../../components/BannerUploader';
 import DeliverySettingsCard from '../../components/DeliverySettingsCard';
 import { createBusinessPaymentLink } from '../../services/orders';
 import { uploadBusinessPhoto } from '../../services/onboardingMedia';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import HelpButton from '../../components/HelpButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { usePreferencesStore } from '../../store/preferencesStore';
@@ -156,7 +155,7 @@ const BusinessHomeScreen = ({ navigation }) => {
 
   const updateBusinessStatus = async (newStatus) => {
     if (newStatus === 'activo' && verificationStatus !== 'aprobado') {
-      Alert.alert('Verificación pendiente', 'El negocio debe ser aprobado por SuperAdmin antes de activarse.');
+      Alert.alert('Verificación pendiente', 'El negocio debe ser aprobado por el equipo administrador antes de activarse.');
       return;
     }
 
@@ -318,7 +317,7 @@ const BusinessHomeScreen = ({ navigation }) => {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.quickLinks}>
           <Text style={[styles.quickLinkLabel, { color: colors.text }]}>Panel del negocio</Text>

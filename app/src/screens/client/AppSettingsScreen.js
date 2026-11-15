@@ -1,5 +1,7 @@
+import { AppText as Text } from '../../components/AppText.js';
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import AnimatedButton from '../../components/AnimatedButton';
@@ -10,6 +12,7 @@ import { useAuthStore } from '../../store/authStore';
 export default function AppSettingsScreen({ navigation }) {
   const language = usePreferencesStore((state) => state.language);
   const appearance = usePreferencesStore((state) => state.appearance);
+  const fontScale = usePreferencesStore((state) => state.fontScale);
   const setPreference = usePreferencesStore((state) => state.setPreference);
   const user = useAuthStore((state) => state.user);
   const signOut = useAuthStore((state) => state.signOut);
@@ -76,6 +79,43 @@ export default function AppSettingsScreen({ navigation }) {
           </Pressable>
         );
       })}
+
+      <Text style={[styles.section, { color: colors.text }]}>{t('settings.accessibility')}</Text>
+      <View style={[styles.accessibilityCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={styles.scaleHeader}>
+          <Text style={[styles.optionTitle, { color: colors.text }]}>{t('settings.fontSize')}</Text>
+          <Text style={[styles.scaleValue, { color: colors.primary }]}>{Math.round(fontScale * 100)}%</Text>
+        </View>
+        <Text style={[styles.detail, { color: colors.muted }]}>{t('settings.fontSizeDetail')}</Text>
+        <Slider
+          accessibilityLabel={t('settings.fontSize')}
+          accessibilityValue={{
+            min: 80,
+            max: 140,
+            now: Math.round(fontScale * 100),
+            text: `${Math.round(fontScale * 100)}%`,
+          }}
+          minimumValue={0.8}
+          maximumValue={1.4}
+          step={0.1}
+          value={fontScale}
+          minimumTrackTintColor={colors.primary}
+          maximumTrackTintColor={colors.border}
+          thumbTintColor={colors.primary}
+          onValueChange={(value) => {
+            void setPreference('fontScale', value, { persist: false });
+          }}
+          onSlidingComplete={(value) => {
+            void setPreference('fontScale', value);
+          }}
+        />
+        <View style={styles.scaleEndpoints}>
+          <Text style={[styles.scaleEndpoint, { color: colors.muted }]}>80%</Text>
+          <Text style={[styles.scaleEndpoint, { color: colors.muted }]}>140%</Text>
+        </View>
+        <Text style={[styles.fontPreview, { color: colors.text }]}>{t('settings.fontSizePreview')}</Text>
+      </View>
+
       {user && (
         <AnimatedButton
           title={t('home.logout')}
@@ -104,6 +144,12 @@ const styles = StyleSheet.create({
   optionCopy: { flex: 1, paddingRight: 12 },
   optionTitle: { fontSize: 16, fontWeight: '700' },
   detail: { fontSize: 14, lineHeight: 20, marginTop: 4 },
+  accessibilityCard: { borderWidth: 1, borderRadius: 14, padding: 16, marginBottom: 10 },
+  scaleHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  scaleValue: { fontSize: 15, fontWeight: '800' },
+  scaleEndpoints: { flexDirection: 'row', justifyContent: 'space-between' },
+  scaleEndpoint: { fontSize: 12 },
+  fontPreview: { fontSize: 16, marginTop: 12 },
   selected: { fontSize: 13, fontWeight: '700', marginTop: 10 },
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   radioDot: { width: 12, height: 12, borderRadius: 6 },

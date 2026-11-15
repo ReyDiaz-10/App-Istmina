@@ -1,6 +1,7 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/client/SupportTickets.js
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, Alert, ScrollView, ActivityIndicator } from 'react-native';
+import { StyleSheet, View, TouchableOpacity, Alert, ScrollView, ActivityIndicator } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
 import { useAuthStore } from '../../store/authStore';
 import { useAppTheme } from '../../hooks/useAppTheme';

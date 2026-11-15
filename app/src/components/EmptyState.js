@@ -1,6 +1,7 @@
+import { AppText as Text } from './AppText.js';
 // app/src/components/EmptyState.js
 import React from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 const EmptyState = ({ title, message, icon }) => (
   <View style={styles.container}>

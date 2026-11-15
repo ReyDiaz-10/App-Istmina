@@ -1,10 +1,11 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, ScrollView, StyleSheet, View } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
 import AnimatedButton from '../../components/AnimatedButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 
-const ROLES = ['Todos', 'cliente', 'negocio', 'repartidor', 'admin', 'superadmin'];
+const ROLES = ['Todos', 'cliente', 'negocio', 'repartidor', 'admin'];
 
 export default function AdminActivityScreen({ navigation }) {
   const { colors } = useAppTheme();

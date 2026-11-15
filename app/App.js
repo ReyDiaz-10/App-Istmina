@@ -1,10 +1,11 @@
+import { AppText as Text } from './src/components/AppText.js';
 // app/App.js
 import React, { useEffect } from 'react';
 import './src/services/liveKitSetup';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { ActivityIndicator, StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
@@ -44,7 +45,6 @@ const getInitialRoute = (user, profile) => {
     case 'repartidor':
       return 'DriverHome';
     case 'admin':
-    case 'superadmin':
       return 'AdminDashboard';
     default:
       return 'ClientHome';
@@ -62,10 +62,7 @@ export default function App() {
   }, [appearance, mode]);
 
   useEffect(() => {
-    if (!supabase) {
-      setInitializing(false);
-      return undefined;
-    }
+    if (!supabase) return undefined;
 
     let isActive = true;
     const checkSession = async () => {
@@ -98,27 +95,30 @@ export default function App() {
   if (!supabase || supabaseConfigError) {
     return (
       <SafeAreaProvider>
-        <View style={[styles.center, { backgroundColor: colors.background }]}>
+        <SafeAreaView style={[styles.center, { backgroundColor: colors.background }]}>
           <Text style={[styles.errorTitle, { color: colors.text }]}>No se pudo iniciar IstmiYa</Text>
           <Text style={[styles.errorMessage, { color: colors.text }]}>
             {supabaseConfigError?.message || 'La conexión con Supabase no está disponible.'}
           </Text>
-        </View>
+        </SafeAreaView>
       </SafeAreaProvider>
     );
   }
 
   if (initializing) {
     return (
-      <View style={[styles.center, { backgroundColor: colors.background }]}>
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
+      <SafeAreaProvider>
+        <SafeAreaView style={[styles.center, { backgroundColor: colors.background }]}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </SafeAreaView>
+      </SafeAreaProvider>
     );
   }
 
   return (
     <SafeAreaProvider>
-      <NavigationContainer theme={{ ...(mode === 'dark' ? DarkTheme : DefaultTheme), colors: { ...(mode === 'dark' ? DarkTheme.colors : DefaultTheme.colors), primary: colors.primary, background: colors.background, card: colors.surface, text: colors.text, border: colors.border } }}>
+      <SafeAreaView style={styles.appSafeArea} edges={['top', 'right', 'left']}>
+        <NavigationContainer theme={{ ...(mode === 'dark' ? DarkTheme : DefaultTheme), colors: { ...(mode === 'dark' ? DarkTheme.colors : DefaultTheme.colors), primary: colors.primary, background: colors.background, card: colors.surface, text: colors.text, border: colors.border } }}>
         <Stack.Navigator 
           initialRouteName={getInitialRoute(user, useAuthStore.getState().profile)}
           screenOptions={{ 
@@ -148,6 +148,7 @@ export default function App() {
           <Stack.Screen name="Register" component={RegisterScreen} />
         </Stack.Navigator>
       </NavigationContainer>
+      </SafeAreaView>
     </SafeAreaProvider>
   );
 }
@@ -155,6 +156,7 @@ export default function App() {
 
 
 const styles = StyleSheet.create({
+  appSafeArea: { flex: 1 },
   center: { 
     flex: 1, 
     justifyContent: 'center', 

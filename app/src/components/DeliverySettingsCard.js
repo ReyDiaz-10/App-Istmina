@@ -1,5 +1,6 @@
+import { AppText as Text, AppTextInput as TextInput } from './AppText.js';
 import React, { useEffect, useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 import * as Location from 'expo-location';
 import AnimatedButton from './AnimatedButton';
 import { supabase } from '../api/supabaseClient';

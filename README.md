@@ -29,9 +29,9 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 | Perfil | Qué puede hacer |
 | --- | --- |
 | **Cliente** | Explorar promociones y negocios, revisar productos, gestionar el carrito, pagar mediante Wompi, seguir pedidos y conversar con el negocio. |
-| **Negocio** | Completar su información legal, registrar un correo para quejas, consultar métricas, gestionar productos y pedidos, y revisar su billetera o suscripción. Solo puede operar tras la aprobación de SuperAdmin. |
+| **Negocio** | Completar su información legal, registrar un correo para quejas, consultar métricas, gestionar productos y pedidos, y revisar su billetera o suscripción. Solo puede operar tras la aprobación de un administrador. |
 | **Repartidor** | Registrar vehículo y placa, cargar fotos privadas para revisión y, después de la aprobación, conectarse, aceptar entregas y marcarlas como completadas. |
-| **SuperAdmin** | Consultar métricas, responder solicitudes, revisar perfiles y conciliar excepciones financieras. Su rol se asigna desde un proceso de servidor; no se puede seleccionar en el registro público. |
+| **Administrador** | Consultar métricas, responder solicitudes, revisar perfiles y conciliar excepciones financieras. Su rol se asigna desde un proceso de servidor; no se puede seleccionar en el registro público. |
 
 ## 🧭 Cómo se usa
 
@@ -57,20 +57,20 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 - **Chat por pedido:** mensajes de cliente y negocio sincronizados mediante Supabase Realtime una vez confirmado el pago.
 - **Llamadas de voz por pedido:** cliente y negocio pueden iniciar, responder o rechazar llamadas desde el chat; Supabase Realtime coordina la invitación y LiveKit transporta el audio.
 - **Compartir teléfono con consentimiento:** el servidor detecta números en el chat y solicita autorización explícita antes de enviarlos; los números autorizados aparecen como enlace telefónico.
-- **Verificación manual de perfiles:** la información legal del negocio y las fotos privadas del repartidor se revisan desde SuperAdmin antes de habilitar operación o conexión.
+- **Verificación manual de perfiles:** la información legal del negocio y las fotos privadas del repartidor se revisan desde el panel de administración antes de habilitar operación o conexión.
 - **Panel del negocio:** resumen de pedidos, ventas entregadas y quejas asociadas a sus pedidos.
 - **Notificación de quejas:** las quejas asociadas a un pedido se envían al correo registrado por el negocio cuando Resend está configurado.
 - **Herramientas para comercios:** billetera recargable o suscripción mensual. En el modelo de billetera se cobra una comisión del 10 % al aceptar un pedido; una suscripción vigente exime de esa comisión.
 - **Pagos Wompi:** creación de enlaces de pago y verificación del webhook en el servidor.
-- **Centro de control SuperAdmin:** métricas agregadas, bandeja de soporte y panel para revisar pagos inciertos, reembolsos y liquidaciones fallidas o demoradas, dejando evidencia de la conciliación.
+- **Centro de control administrativo:** métricas agregadas, bandeja de soporte y panel para revisar pagos inciertos, reembolsos y liquidaciones fallidas o demoradas, dejando evidencia de la conciliación.
 - **Ayuda por perfil:** clientes, negocios, repartidores y administración pueden reportar problemas desde su flujo; los reportes pueden relacionarse con un pedido.
 - **Acerca de IstmiYa:** información de la app, versión, contacto y accesos a soporte y privacidad; el ingreso administrativo valida el rol en la sesión y en Supabase.
-- **Preferencias de la app:** idioma Español (Latinoamérica) predeterminado y apariencia automática por hora local (modo claro de 06:00 a 17:59, modo oscuro el resto del día), con opciones manuales y sincronización con el dispositivo.
+- **Preferencias de la app:** idioma Español (Latinoamérica) predeterminado, apariencia automática por hora local (modo claro de 06:00 a 17:59, modo oscuro el resto del día) y tamaño de letra ajustable entre 80 % y 140 %, guardado localmente.
 - **Identidad de marketplace:** icono de bolsa de compras con productos, y lema visible en el inicio.
 - **Privacidad:** se incluye un borrador de política accesible desde la app. Completa los datos del responsable y sométela a revisión legal antes de publicar.
 - **Perfiles de prueba:** script opcional que crea cuentas de demostración y genera contraseñas aleatorias localmente.
 
-> **Estado de integración:** el registro por rol, la revisión manual, el chat moderado, las llamadas y los paneles requieren aplicar las migraciones `0006` a `0012`. `0011_customer_profile_username.sql` conserva el nombre de usuario legado y `0012_customer_profile_nickname.sql` agrega el apodo que se muestra en el saludo de Mi perfil. Las migraciones `0009` y `0010` habilitan SuperAdmin en esquemas con restricciones `CHECK` y permiten listar negocios aprobados sin exponer sus datos legales. Las llamadas requieren desplegar la función de tokens y configurar LiveKit; en móvil necesitan un development build (no Expo Go). Las notificaciones por correo requieren configurar Resend. Los pagos dependen de las Edge Functions y credenciales de Wompi. Consulta [INSTRUCCIONES.md](./INSTRUCCIONES.md) antes de habilitar estos flujos.
+> **Estado de integración:** aplica todas las migraciones pendientes en orden. Las migraciones `0009` y `0019` son parte del historial; `0025_unify_user_roles.sql` transforma los registros y permisos heredados y deja como roles vigentes `cliente`, `negocio`, `repartidor` y `admin`. Esta migración nueva aún debe aplicarse y validarse en Supabase antes de desplegar la actualización. `0011_customer_profile_username.sql` conserva el nombre de usuario legado y `0012_customer_profile_nickname.sql` agrega el apodo que se muestra en el saludo de Mi perfil. Las llamadas requieren desplegar la función de tokens y configurar LiveKit; en móvil necesitan un development build (no Expo Go). Las notificaciones por correo requieren configurar Resend. Los pagos dependen de las Edge Functions y credenciales de Wompi. Consulta [INSTRUCCIONES.md](./INSTRUCCIONES.md) antes de habilitar estos flujos.
 
 ## 💳 Cancelaciones, reembolsos y liquidaciones
 
@@ -83,9 +83,9 @@ La experiencia comienza **sin iniciar sesión**: cualquier visitante puede explo
 
 ## 🧪 Pruebas y validación
 
-Desde `app/`, ejecuta `npm test` para las pruebas automatizadas de búsqueda y categorías. Ejecuta también `npm run lint` y `npm run build:web`.
+Desde `app/`, ejecuta `npm test` para las pruebas automatizadas de búsqueda, categorías y escala de texto. Ejecuta también `npm run lint` y `npm run build:web`.
 
-La suite local no simula la firma ni la entrega real de eventos de Wompi. Las pruebas end-to-end financieras deben hacerse en un proyecto Supabase dedicado y con credenciales Sandbox: pago aprobado/rechazado, evento repetido, reintento, cancelación y reembolso pendiente, dos repartidores intentando aceptar el mismo pedido y liquidación pendiente/fallida. La lista operativa completa y los comandos están en [INSTRUCCIONES.md](./INSTRUCCIONES.md) y [payouts_setup.md](./docs/payouts_setup.md). No ejecutes estas pruebas sobre producción.
+En la última validación local, `npm test` pasó (5 pruebas aprobadas y 1 omitida) y `npm run build:web` terminó correctamente. `npm run lint` todavía reporta errores y avisos que deben revisarse; la migración `0025` tampoco se ha aplicado ni validado en PostgreSQL. La suite local no simula la firma ni la entrega real de eventos de Wompi. Las pruebas end-to-end financieras deben hacerse en un proyecto Supabase dedicado y con credenciales Sandbox: pago aprobado/rechazado, evento repetido, reintento, cancelación y reembolso pendiente, dos repartidores intentando aceptar el mismo pedido y liquidación pendiente/fallida. La lista operativa completa y los comandos están en [INSTRUCCIONES.md](./INSTRUCCIONES.md) y [payouts_setup.md](./docs/payouts_setup.md). No ejecutes estas pruebas sobre producción.
 
 ## 🤖 Builds Android automáticos con EAS
 
@@ -145,7 +145,7 @@ npm.cmd run web
 
 - La llave `service_role` de Supabase y las llaves privadas/secretos de Wompi deben permanecer en el servidor.
 - El cliente móvil solo utiliza `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
-- Las fotos del rostro y documentos del repartidor se guardan en buckets privados; el acceso se limita al propietario, SuperAdmin y participantes autorizados de una entrega activa. La foto del local es pública para mostrar el negocio.
+- Las fotos del rostro y documentos del repartidor se guardan en buckets privados; el acceso se limita al propietario, administradores y participantes autorizados de una entrega activa. La foto del local es pública para mostrar el negocio.
 - Resend se invoca desde una Edge Function; nunca pongas su API key en la app.
 - No publiques archivos `.env`, `.env_test` ni credenciales de demostración.
 - Usa un proyecto de Supabase de pruebas para generar cuentas demo; el script reemplaza las contraseñas de las cuentas de prueba existentes.

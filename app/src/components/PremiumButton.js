@@ -1,6 +1,7 @@
+import { AppText as Text } from './AppText.js';
 // app/src/components/PremiumButton.js
 import React, { useRef } from 'react';
-import { Pressable, Text, Animated, StyleSheet } from 'react-native';
+import { Pressable, Animated, StyleSheet } from 'react-native';
 import * as Haptics from 'expo-haptics';
 
 const PremiumButton = ({ onPress, title, style, textStyle }) => {

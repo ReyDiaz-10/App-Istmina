@@ -1,5 +1,6 @@
+import { AppText as Text } from './AppText.js';
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet, View } from 'react-native';
 
 const STATUS_CONTENT = {
   pendiente: { icon: '💳', label: 'Esperando confirmación del pago' },

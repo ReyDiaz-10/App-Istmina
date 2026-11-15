@@ -1,5 +1,6 @@
+import { AppText as Text } from './AppText.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { FlatList, Image, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { FlatList, Image, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { supabase } from '../api/supabaseClient';
 
 const PromoCarousel = () => {

@@ -1,5 +1,6 @@
+import { AppText as Text } from './AppText.js';
 import React, { useState } from 'react';
-import { Animated, Platform, Pressable, StyleSheet, Text } from 'react-native';
+import { Animated, Platform, Pressable, StyleSheet } from 'react-native';
 import { useRoleTheme } from '../hooks/useRoleTheme';
 
 const VARIANT_CONTENT = {

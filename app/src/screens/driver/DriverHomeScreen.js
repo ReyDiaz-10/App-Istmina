@@ -1,8 +1,14 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/driver/DriverHomeScreen.js
 import React, { useState, useEffect } from 'react';
 import {
-  StyleSheet, View, Text, FlatList, Linking,
-  ActivityIndicator, Alert, Switch, SafeAreaView, TextInput
+  StyleSheet,
+  View,
+  FlatList,
+  Linking,
+  ActivityIndicator,
+  Alert,
+  Switch,
 } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
 import AnimatedButton from '../../components/AnimatedButton';
@@ -14,6 +20,7 @@ import { useAuthStore } from '../../store/authStore';
 import { formatCOP } from '../../utils/formatters';
 import DriverPayoutWalletCard from '../../components/DriverPayoutWalletCard';
 import { usePreferencesStore } from '../../store/preferencesStore';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const DriverHomeScreen = ({ navigation }) => {
   const { profile } = useAuthStore();
@@ -241,7 +248,7 @@ const DriverHomeScreen = ({ navigation }) => {
   if (loading) return <View style={styles.center}><ActivityIndicator size="large" color="#1A237E" /></View>;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
       <HelpButton navigation={navigation} context="repartidor" orderId={activeOrder?.id} compact />
       <View style={styles.sessionActions}>
         <AnimatedButton title="Mi perfil" variant="secondary" onPress={() => navigation.navigate('DriverProfile')} />

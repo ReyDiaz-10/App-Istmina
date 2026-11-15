@@ -58,7 +58,7 @@ export async function uploadRegistrationMedia({
     if (driverError) throw driverError;
     if (driver.verification_status === 'aprobado'
       && (driverPhotoUri || platePhotoUri)) {
-      throw new Error('Las fotos de un perfil aprobado solo pueden cambiarse con ayuda de SuperAdmin.');
+      throw new Error('Las fotos de un perfil aprobado solo pueden cambiarse con ayuda del equipo administrador.');
     }
 
     if (driverPhotoUri) {
@@ -117,7 +117,7 @@ export async function uploadDriverPhoto({ userId, uri }) {
     .single();
   if (driverError) throw driverError;
   if (driver.verification_status === 'aprobado') {
-    throw new Error('Las fotos de un perfil aprobado solo pueden cambiarse con ayuda de SuperAdmin.');
+    throw new Error('Las fotos de un perfil aprobado solo pueden cambiarse con ayuda del equipo administrador.');
   }
   const path = await uploadImage('profile-media', userId, 'avatar', uri);
 
@@ -147,7 +147,7 @@ export async function uploadDriverPlatePhoto({ userId, uri }) {
     .single();
   if (driverError) throw driverError;
   if (driver.verification_status === 'aprobado') {
-    throw new Error('Los documentos de un perfil aprobado solo pueden cambiarse con ayuda de SuperAdmin.');
+    throw new Error('Los documentos de un perfil aprobado solo pueden cambiarse con ayuda del equipo administrador.');
   }
   const path = await uploadImage('driver-documents', userId, 'plate', uri);
 
@@ -169,7 +169,7 @@ export async function uploadDriverIdentityPhoto({ userId, uri }) {
     .single();
   if (driverError) throw driverError;
   if (driver.verification_status === 'aprobado') {
-    throw new Error('Los documentos de un perfil aprobado solo pueden cambiarse con ayuda de SuperAdmin.');
+    throw new Error('Los documentos de un perfil aprobado solo pueden cambiarse con ayuda del equipo administrador.');
   }
   const path = await uploadImage('driver-documents', userId, 'identity', uri);
 

@@ -1,6 +1,7 @@
+import { AppText as Text } from './AppText.js';
 // app/src/components/AlertBanner.js
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, TouchableOpacity } from 'react-native';
 
 const AlertBanner = ({ expiresAt, onRenew }) => {
   if (!expiresAt) return null;

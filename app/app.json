@@ -26,6 +26,13 @@
         }
       ],
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "IstmiYa necesita acceso a tus fotos para cargar imágenes de perfil y del negocio.",
+          "cameraPermission": "IstmiYa necesita acceso a la cámara para tomar las fotos de verificación."
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "IstmiYa usa tu ubicación solo para calcular el domicilio y coordinar tu pedido."

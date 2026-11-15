@@ -1,5 +1,6 @@
+import { AppText as Text } from '../../components/AppText.js';
 import React from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet } from 'react-native';
 import { APP_INFO } from '../../constants/appInfo';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import AnimatedButton from '../../components/AnimatedButton';

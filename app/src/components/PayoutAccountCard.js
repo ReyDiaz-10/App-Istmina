@@ -1,5 +1,6 @@
+import { AppText as Text, AppTextInput as TextInput } from './AppText.js';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, StyleSheet, View } from 'react-native';
 import { supabase } from '../api/supabaseClient';
 import { useAppTheme } from '../hooks/useAppTheme';
 import AnimatedButton from './AnimatedButton';

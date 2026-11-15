@@ -1,5 +1,6 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
 import { useAuthStore } from '../../store/authStore';
 import HelpButton from '../../components/HelpButton';
@@ -107,7 +108,7 @@ export default function AdminDashboardScreen({ navigation }) {
         p_entity_type: entityType,
         p_entity_id: entityId,
         p_approved: approved,
-        p_note: approved ? 'Verificación revisada por SuperAdmin.' : 'Se requieren correcciones antes de la aprobación.',
+        p_note: approved ? 'Verificación revisada por el equipo administrador.' : 'Se requieren correcciones antes de la aprobación.',
       });
       if (error) throw error;
       await load();

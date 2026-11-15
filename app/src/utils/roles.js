@@ -1,1 +1,1 @@
-export const isAdminRole = (role) => role === 'admin' || role === 'superadmin';
+export const isAdminRole = (role) => role === 'admin';

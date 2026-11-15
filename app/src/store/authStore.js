@@ -107,9 +107,9 @@ export const useAuthStore = create((set, get) => ({
       await set({ user: data.user });
       const profile = await useAuthStore.getState().fetchProfile(data.user.id);
       if (!profile) {
-        throw new Error('La cuenta inició sesión, pero no tiene un perfil en la tabla profiles. Aplica las migraciones 0018 y 0019 para habilitar el perfil admin.');
+        throw new Error('La cuenta inició sesión, pero no tiene un perfil en la tabla profiles. Aplica todas las migraciones pendientes, incluida la 0025, para habilitar el perfil admin.');
       }
-      if (!['cliente', 'negocio', 'repartidor', 'admin', 'superadmin'].includes(profile.role)) {
+      if (!['cliente', 'negocio', 'repartidor', 'admin'].includes(profile.role)) {
         throw new Error(`El perfil tiene un rol no reconocido (${profile.role || 'vacío'}). La cuenta administrativa debe quedar como admin.`);
       }
       try {

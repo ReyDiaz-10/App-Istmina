@@ -1,15 +1,14 @@
+import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/auth/RegisterScreen.js
 import React, { useState } from 'react';
-import { 
-  StyleSheet, 
-  View, 
-  Text, 
-  TextInput, 
+import {
+  StyleSheet,
+  View,
   Image,
-  ActivityIndicator, 
-  KeyboardAvoidingView, 
-  Platform, 
-  ScrollView 
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuthStore } from '../../store/authStore';
@@ -55,6 +54,13 @@ const RegisterScreen = ({ navigation, route }) => {
         quality: 0.7,
       };
       const captureWithCamera = Platform.OS !== 'web' && target !== 'business';
+      if (captureWithCamera) {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          setNotice({ type: 'error', text: 'Permite el acceso a la cámara en los ajustes del dispositivo para tomar esta foto.' });
+          return;
+        }
+      }
       const result = !captureWithCamera
         ? await ImagePicker.launchImageLibraryAsync({ ...options, aspect: [4, 3] })
         : await ImagePicker.launchCameraAsync({ ...options, aspect: [4, 3] });

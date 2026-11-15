@@ -1,6 +1,7 @@
+import { AppText as Text } from './AppText.js';
 // app/src/components/BannerUploader.js
 import React, { useState, useEffect } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../api/supabaseClient';
 import AnimatedButton from './AnimatedButton';

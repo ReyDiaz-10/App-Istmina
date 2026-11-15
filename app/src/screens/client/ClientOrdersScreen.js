@@ -1,3 +1,4 @@
+import { AppText as Text } from '../../components/AppText.js';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -5,7 +6,6 @@ import {
   FlatList,
   Image,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
 import { supabase } from '../../api/supabaseClient';

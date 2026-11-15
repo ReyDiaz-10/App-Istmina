@@ -1,10 +1,15 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { create } from 'zustand';
 import appConfig from '../../app.json';
+import { DEFAULT_FONT_SCALE, normalizeFontScale } from '../utils/fontScale.mjs';
 
 const STORAGE_KEY = 'istmiya-app-preferences-v1';
-const PREFERENCES_VERSION = 2;
-const DEFAULTS = { language: appConfig.expo.extra?.defaultLanguage || 'es-419', appearance: 'clock' };
+const PREFERENCES_VERSION = 3;
+const DEFAULTS = {
+  language: appConfig.expo.extra?.defaultLanguage || 'es-419',
+  appearance: 'clock',
+  fontScale: DEFAULT_FONT_SCALE,
+};
 const supportedAppearance = new Set(['clock', 'system', 'light', 'dark']);
 const supportedLanguages = new Set(['es-419', 'en']);
 
@@ -23,6 +28,7 @@ export const usePreferencesStore = create((set, get) => ({
           ? preferences.language
           : preferences.language === 'es-CO' ? 'es-419' : DEFAULTS.language,
         appearance: supportedAppearance.has(savedAppearance) ? savedAppearance : DEFAULTS.appearance,
+        fontScale: normalizeFontScale(preferences.fontScale),
         hydrated: true,
       });
     } catch (error) {
@@ -30,11 +36,18 @@ export const usePreferencesStore = create((set, get) => ({
       set({ ...DEFAULTS, hydrated: true });
     }
   },
-  setPreference: async (key, value) => {
+  setPreference: async (key, value, { persist = true } = {}) => {
     if (key === 'language' && !supportedLanguages.has(value)) return;
     if (key === 'appearance' && !supportedAppearance.has(value)) return;
-    const next = { language: get().language, appearance: get().appearance, [key]: value };
+    if (key === 'fontScale' && (typeof value !== 'number' || !Number.isFinite(value))) return;
+    const next = {
+      language: get().language,
+      appearance: get().appearance,
+      fontScale: get().fontScale,
+      [key]: key === 'fontScale' ? normalizeFontScale(value) : value,
+    };
     set(next);
+    if (!persist) return;
     try {
       await AsyncStorage.setItem(
         STORAGE_KEY,

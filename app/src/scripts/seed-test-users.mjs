@@ -31,7 +31,7 @@ const demoUsers = [
   { role: 'cliente', email: 'cliente.demo@example.com', name: 'Cliente de Prueba' },
   { role: 'negocio', email: 'negocio.demo@example.com', name: 'Negocio de Prueba' },
   { role: 'repartidor', email: 'repartidor.demo@example.com', name: 'Repartidor de Prueba' },
-  { role: 'superadmin', email: 'superadmin.demo@example.com', name: 'SuperAdmin de Prueba' },
+  { role: 'admin', email: 'admin.demo@example.com', name: 'Admin de Prueba' },
 ];
 
 const throwIfError = (error) => {

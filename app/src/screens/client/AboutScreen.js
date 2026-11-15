@@ -1,5 +1,6 @@
+import { AppText as Text } from '../../components/AppText.js';
 import React from 'react';
-import { Alert, Linking, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Linking, ScrollView, StyleSheet, View } from 'react-native';
 import AnimatedButton from '../../components/AnimatedButton';
 import { APP_INFO } from '../../constants/appInfo';
 import { useAuthStore } from '../../store/authStore';
