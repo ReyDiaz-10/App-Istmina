@@ -31,7 +31,7 @@ SQL de ejemplo por secreto: `select vault.create_secret('<valor>', '<nombre>');`
 
 ## Despliegue
 
-1. Aplica todas las migraciones pendientes en orden. `0015` usa `pgcrypto`, `pg_cron`, `pg_net` y Supabase Vault; `0022` agrega el ledger de ventas entregadas y liquidaciones semanales; `0023` agrega la conciliación administrativa, la lógica de inventario y códigos de entrega, y programa la expiración de pedidos impagos cada cinco minutos.
+1. Aplica todas las migraciones pendientes en orden. `0015` usa `pgcrypto`, `pg_cron`, `pg_net` y Supabase Vault; `0022` agrega el ledger de ventas entregadas y liquidaciones semanales; `0023` agrega la conciliación administrativa, la lógica de inventario y códigos de entrega, y programa la expiración de pedidos impagos cada cinco minutos; `0024` corrige el esquema de la función HTTP de `pg_net` usada por el cron financiero.
 2. Configura los secretos. No habilites producción antes de probar el sandbox y el webhook.
 3. Despliega `payout-banks`, `process-payouts` y `wompi-payouts-webhook`.
 4. Registra el webhook público `https://<proyecto>.supabase.co/functions/v1/wompi-payouts-webhook` en Wompi, en sandbox y/o producción según el ambiente.

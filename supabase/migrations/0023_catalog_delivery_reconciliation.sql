@@ -274,7 +274,7 @@ DECLARE
   v_client_id UUID := auth.uid();
   v_role TEXT;
   v_item JSONB;
-  v_option JSONB;
+  v_option RECORD;
   v_option_ids JSONB;
   v_product_id UUID;
   v_option_id UUID;
@@ -664,7 +664,7 @@ BEGIN
   END IF;
 
   UPDATE public.orders
-  SET status = v_next_status
+  SET status = v_next_status::public.order_status
   WHERE id = p_order_id AND status::TEXT = v_expected_status;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Order status changed during code verification';
