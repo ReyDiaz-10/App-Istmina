@@ -87,6 +87,19 @@ Desde `app/`, ejecuta `npm test` para las pruebas automatizadas de búsqueda y c
 
 La suite local no simula la firma ni la entrega real de eventos de Wompi. Las pruebas end-to-end financieras deben hacerse en un proyecto Supabase dedicado y con credenciales Sandbox: pago aprobado/rechazado, evento repetido, reintento, cancelación y reembolso pendiente, dos repartidores intentando aceptar el mismo pedido y liquidación pendiente/fallida. La lista operativa completa y los comandos están en [INSTRUCCIONES.md](./INSTRUCCIONES.md) y [payouts_setup.md](./docs/payouts_setup.md). No ejecutes estas pruebas sobre producción.
 
+## 🤖 Builds Android automáticos con EAS
+
+Cada `git push` a `main` inicia un build Android de perfil `preview` en EAS. El APK queda disponible en el enlace del build de Expo; también se puede iniciar manualmente desde GitHub Actions con `workflow_dispatch`. El perfil incrementa automáticamente el `versionCode` remoto.
+
+Antes del primer build automático:
+
+1. Crea un token en Expo y guárdalo en GitHub como secreto de Actions llamado `EXPO_TOKEN` (Settings → Secrets and variables → Actions). No lo agregues al repositorio.
+2. Verifica que `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` estén definidas en el entorno `preview` de EAS; actualmente ambas aparecen configuradas.
+3. Desde `app/`, consulta el contador remoto con `eas build:version:get --platform android --profile preview`. Actualmente es `2`; `autoIncrement` lo aumentará en el siguiente build.
+4. Confirma y sube a `main` el workflow `.github/workflows/eas-android-apk.yml` y la configuración `app/eas.json`.
+
+Los siguientes pushes a `main` generarán un APK nuevo con un `versionCode` mayor. EAS no instala el APK automáticamente en los teléfonos: comparte el enlace del nuevo build para que los usuarios lo instalen. Estos APK son para distribución interna; Google Play requiere un perfil de producción de tipo App Bundle (AAB).
+
 ## 🧰 Tecnologías
 
 - **Aplicación:** React Native, Expo SDK 58 y React Navigation (el contenedor principal está en `app/App.js`).
