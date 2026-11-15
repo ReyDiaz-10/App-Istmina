@@ -3,7 +3,7 @@ import React, { useEffect } from 'react';
 import './src/services/liveKitSetup';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import LoginScreen from './src/screens/auth/LoginScreen';
@@ -28,7 +28,7 @@ import AppSettingsScreen from './src/screens/client/AppSettingsScreen';
 import ClientProfileScreen from './src/screens/client/ClientProfileScreen';
 
 import { useAuthStore } from './src/store/authStore';
-import { supabase } from './src/api/supabaseClient';
+import { supabase, supabaseConfigError } from './src/api/supabaseClient';
 import { usePreferencesStore } from './src/store/preferencesStore';
 import { useAppTheme } from './src/hooks/useAppTheme';
 import { applyAppearancePreference } from './src/utils/appearance';
@@ -62,25 +62,51 @@ export default function App() {
   }, [appearance, mode]);
 
   useEffect(() => {
+    if (!supabase) {
+      setInitializing(false);
+      return undefined;
+    }
+
+    let isActive = true;
     const checkSession = async () => {
       try {
         await usePreferencesStore.getState().hydrate();
         const savedAppearance = usePreferencesStore.getState().appearance;
         applyAppearancePreference(savedAppearance);
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
+        const session = data?.session;
         if (session?.user) {
           useAuthStore.setState({ user: session.user });
           await fetchProfile(session.user.id);
         }
       } catch (error) {
-        console.error('Error verificando sesión:', error);
+        console.warn('No se pudo restaurar la sesión al iniciar; se continuará sin sesión.', error);
+        useAuthStore.setState({ user: null, profile: null });
       } finally {
-        setInitializing(false);
+        if (isActive) setInitializing(false);
       }
     };
 
-    checkSession();
+    void checkSession();
+    return () => {
+      isActive = false;
+    };
   }, [fetchProfile]);
+
+  if (!supabase || supabaseConfigError) {
+    return (
+      <SafeAreaProvider>
+        <View style={[styles.center, { backgroundColor: colors.background }]}>
+          <Text style={[styles.errorTitle, { color: colors.text }]}>No se pudo iniciar IstmiYa</Text>
+          <Text style={[styles.errorMessage, { color: colors.text }]}>
+            {supabaseConfigError?.message || 'La conexión con Supabase no está disponible.'}
+          </Text>
+        </View>
+      </SafeAreaProvider>
+    );
+  }
 
   if (initializing) {
     return (
@@ -134,5 +160,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center', 
     alignItems: 'center', 
     backgroundColor: '#F5F7FA' 
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  errorMessage: {
+    fontSize: 14,
+    textAlign: 'center',
+    paddingHorizontal: 24,
   },
 });
