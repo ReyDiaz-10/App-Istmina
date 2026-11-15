@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -19,6 +19,7 @@ import { useAppTheme } from '../../hooks/useAppTheme';
 import MarketplaceBrand from '../../components/MarketplaceBrand';
 import { useTranslation } from '../../hooks/useTranslation';
 import { usePreferencesStore } from '../../store/preferencesStore';
+import { filterBusinesses } from '../../utils/marketplaceFilters.mjs';
 
 const CATEGORIES = [
   { key: 'food', spanish: '🍔 Comida', english: '🍔 Food' },
@@ -32,6 +33,7 @@ const ClientHomeScreen = ({ navigation }) => {
   const [businesses, setBusinesses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [category, setCategory] = useState('Todos');
+  const [searchText, setSearchText] = useState('');
   const theme = useRoleTheme();
   const { colors } = useAppTheme();
   const user = useAuthStore((state) => state.user);
@@ -55,20 +57,30 @@ const ClientHomeScreen = ({ navigation }) => {
       try {
         const { data, error } = await supabase
           .from('businesses')
-          .select('*, products(image_url)')
+          .select('*, products(name, description, category, image_url, is_available, inventory_enabled, stock_quantity)')
           .eq('status', 'activo');
 
         if (error) throw error;
-        setBusinesses(data || []);
+        setBusinesses((data || []).map((business) => ({
+          ...business,
+          products: (business.products || []).filter((product) => (
+            product.is_available !== false
+            && (!product.inventory_enabled || Number(product.stock_quantity) > 0)
+          )),
+        })));
       } catch (error) {
-        console.error(`${t('home.loadError')}:`, error.message);
+        console.error('No se pudieron cargar los negocios:', error.message);
       } finally {
         setLoading(false);
       }
     };
 
     fetchBusinesses();
-  }, [t]);
+  }, []);
+
+  const visibleBusinesses = useMemo(() => {
+    return filterBusinesses(businesses, category, searchText);
+  }, [businesses, category, searchText]);
 
   const handleSessionButton = async () => {
     if (!user) {
@@ -161,6 +173,10 @@ const ClientHomeScreen = ({ navigation }) => {
           style={[styles.searchInput, { backgroundColor: colors.input, borderColor: colors.border, color: colors.text }]}
           placeholder={t('home.search')}
           accessibilityLabel={t('home.searchLabel')}
+          value={searchText}
+          onChangeText={setSearchText}
+          returnKeyType="search"
+          autoCapitalize="none"
         />
       </View>
       <View style={styles.promoSection}>
@@ -214,7 +230,7 @@ const ClientHomeScreen = ({ navigation }) => {
       ) : (
         <FlatList
           style={styles.businessList}
-          data={businesses}
+          data={visibleBusinesses}
           keyExtractor={(item) => item.id}
           renderItem={renderBusinessCard}
           ListHeaderComponent={listHeader}

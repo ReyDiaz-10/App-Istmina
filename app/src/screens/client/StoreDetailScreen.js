@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Modal,
+  Pressable,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
@@ -19,6 +23,8 @@ const StoreDetailScreen = ({ route, navigation }) => {
   const { businessId: selectedBusinessId, storeName } = route.params || {};
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedOptions, setSelectedOptions] = useState([]);
   const user = useAuthStore((state) => state.user);
   const addItem = useCartStore((state) => state.addItem);
   const theme = useRoleTheme();
@@ -38,11 +44,14 @@ const StoreDetailScreen = ({ route, navigation }) => {
       try {
         const { data, error } = await supabase
           .from('products')
-          .select('*')
+          .select('*, product_options(*)')
           .eq('business_id', selectedBusinessId);
 
         if (error) throw error;
-        if (active) setProducts(data || []);
+        if (active) setProducts((data || []).filter((product) => (
+          product.is_available !== false
+          && (!product.inventory_enabled || Number(product.stock_quantity) > 0)
+        )));
       } catch (error) {
         console.error('Error cargando productos:', error.message);
       } finally {
@@ -56,7 +65,7 @@ const StoreDetailScreen = ({ route, navigation }) => {
     };
   }, [selectedBusinessId]);
 
-  const handleAddToCart = (item) => {
+  const handleAddToCart = (item, optionIds = []) => {
     if (!user) {
       navigation.navigate('Login', {
         returnTo: 'StoreDetail',
@@ -65,31 +74,76 @@ const StoreDetailScreen = ({ route, navigation }) => {
       return;
     }
 
+    const options = (item.product_options || []).filter((option) => (
+      optionIds.includes(option.id)
+    ));
     addItem({
       id: item.id,
-      name: item.name,
-      price: item.price,
+      name: options.length
+        ? `${item.name} · ${options.map((option) => option.name).join(', ')}`
+        : item.name,
+      price: Number(item.price) + options.reduce((total, option) => total + Number(option.price_delta || 0), 0),
       businessId: item.business_id,
+      optionIds,
+      optionNames: options.map((option) => `${option.option_group}: ${option.name}`),
     });
+    setSelectedProduct(null);
+    setSelectedOptions([]);
   };
 
-  const renderProduct = ({ item }) => (
-    <View style={[styles.productCard, { backgroundColor: colors.surface }]}>
-      <View style={styles.productInfo}>
-        <Text style={[styles.productName, { color: colors.text }]}>{item.name}</Text>
-        <Text style={[styles.productDesc, { color: colors.muted }]}>{item.description}</Text>
-        <Text style={[styles.productPrice, { color: theme.primary }]}>{formatCOP(item.price, locale)}</Text>
+  const chooseProductOptions = (item) => {
+    const options = (item.product_options || []).filter((option) => option.is_available);
+    if (!options.length) {
+      handleAddToCart(item);
+      return;
+    }
+    const requiredByGroup = new Map();
+    options.forEach((option) => {
+      if (option.is_required && !requiredByGroup.has(option.option_group)) {
+        requiredByGroup.set(option.option_group, option.id);
+      }
+    });
+    setSelectedProduct(item);
+    setSelectedOptions([...requiredByGroup.values()]);
+  };
+
+  const confirmProductOptions = () => {
+    const requiredGroups = new Set((selectedProduct?.product_options || [])
+      .filter((option) => option.is_available && option.is_required)
+      .map((option) => option.option_group));
+    const selectedGroups = new Set((selectedProduct?.product_options || [])
+      .filter((option) => selectedOptions.includes(option.id))
+      .map((option) => option.option_group));
+    if ([...requiredGroups].some((group) => !selectedGroups.has(group))) {
+      Alert.alert('Selecciona una variante', 'Este producto requiere una opción obligatoria antes de agregarlo.');
+      return;
+    }
+    handleAddToCart(selectedProduct, selectedOptions);
+  };
+
+  const renderProduct = ({ item }) => {
+    const availableOptions = (item.product_options || []).filter((option) => option.is_available);
+    return (
+      <View style={[styles.productCard, { backgroundColor: colors.surface }]}>
+        <View style={styles.productInfo}>
+          <Text style={[styles.productName, { color: colors.text }]}>{item.name}</Text>
+          <Text style={[styles.productDesc, { color: colors.muted }]}>{item.description}</Text>
+          {item.inventory_enabled ? (
+            <Text style={[styles.productDesc, { color: colors.muted }]}>Disponibles: {item.stock_quantity}</Text>
+          ) : null}
+          <Text style={[styles.productPrice, { color: theme.primary }]}>{formatCOP(item.price, locale)}</Text>
+        </View>
+        <AnimatedButton
+          title="+"
+          accessibilityLabel={`Agregar ${item.name} al carrito`}
+          onPress={() => chooseProductOptions(item)}
+          style={styles.addButton}
+          buttonStyle={styles.addButtonSurface}
+          textStyle={styles.addButtonText}
+        />
       </View>
-      <AnimatedButton
-        title="+"
-        accessibilityLabel={`Agregar ${item.name} al carrito`}
-        onPress={() => handleAddToCart(item)}
-        style={styles.addButton}
-        buttonStyle={styles.addButtonSurface}
-        textStyle={styles.addButtonText}
-      />
-    </View>
-  );
+    );
+  };
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -113,6 +167,64 @@ const StoreDetailScreen = ({ route, navigation }) => {
               <Text style={styles.emptyText}>Este negocio aún no tiene productos disponibles.</Text>
             }
           />
+          <Modal
+            visible={Boolean(selectedProduct)}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setSelectedProduct(null)}
+          >
+            <View style={styles.modalBackdrop}>
+              <View style={[styles.optionsModal, { backgroundColor: colors.surface }]}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>{selectedProduct?.name}</Text>
+                <FlatList
+                  data={selectedProduct?.product_options?.filter((option) => option.is_available) || []}
+                  keyExtractor={(option) => option.id}
+                  renderItem={({ item: option }) => {
+                    const selected = selectedOptions.includes(option.id);
+                    return (
+                      <Pressable
+                        accessibilityRole="checkbox"
+                        accessibilityState={{ checked: selected }}
+                        style={[styles.optionRow, { borderColor: colors.border }]}
+                        onPress={() => setSelectedOptions((current) => {
+                          const sameGroup = selectedProduct.product_options
+                            .filter((entry) => entry.is_available
+                              && entry.option_type === 'variant'
+                              && entry.option_group === option.option_group)
+                            .map((entry) => entry.id);
+                          if (selected) return current.filter((id) => id !== option.id);
+                          return [
+                            ...current.filter((id) => !sameGroup.includes(id)),
+                            option.id,
+                          ];
+                        })}
+                      >
+                        <View style={styles.optionCopy}>
+                          <Text style={[styles.optionGroup, { color: colors.muted }]}>
+                            {option.option_group} · {option.option_type === 'variant' ? 'Variante' : 'Extra'}
+                            {option.is_required ? ' · Obligatorio' : ''}
+                          </Text>
+                          <Text style={[styles.optionName, { color: colors.text }]}>{option.name}</Text>
+                        </View>
+                        <Text style={[styles.optionPrice, { color: theme.primary }]}>
+                          {Number(option.price_delta) ? `+${formatCOP(option.price_delta, locale)}` : 'Incluido'}
+                          {selected ? ' ✓' : ''}
+                        </Text>
+                      </Pressable>
+                    );
+                  }}
+                  ListEmptyComponent={<Text style={{ color: colors.muted }}>Este producto no tiene opciones disponibles.</Text>}
+                />
+                <View style={styles.modalActions}>
+                  <AnimatedButton title="Cancelar" variant="secondary" onPress={() => setSelectedProduct(null)} />
+                  <AnimatedButton
+                    title="Agregar al carrito"
+                    onPress={confirmProductOptions}
+                  />
+                </View>
+              </View>
+            </View>
+          </Modal>
           <AnimatedButton
             title="Ver carrito 🛒"
             navigation={navigation}
@@ -160,6 +272,15 @@ const styles = StyleSheet.create({
   addButtonSurface: { width: 42, height: 42, minHeight: 42, borderRadius: 21, padding: 0 },
   addButtonText: { fontSize: 22, lineHeight: 24 },
   emptyText: { textAlign: 'center', marginTop: 50, color: '#757575', fontSize: 16 },
+  modalBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
+  optionsModal: { maxHeight: '80%', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20 },
+  modalTitle: { fontSize: 20, fontWeight: '800', marginBottom: 10 },
+  optionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, paddingVertical: 12, gap: 12 },
+  optionCopy: { flex: 1 },
+  optionGroup: { fontSize: 11 },
+  optionName: { fontSize: 15, fontWeight: '600', marginTop: 3 },
+  optionPrice: { fontWeight: '700' },
+  modalActions: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, paddingTop: 12 },
   cartFloatingButton: {
     position: 'absolute',
     bottom: 30,

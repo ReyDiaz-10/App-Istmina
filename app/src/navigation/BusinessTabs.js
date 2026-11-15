@@ -5,6 +5,7 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import BusinessHomeScreen from '../screens/business/BusinessHomeScreen';
 import BusinessOrdersScreen from '../screens/business/BusinessOrdersScreen';
 import BusinessCatalogScreen from '../screens/business/BusinessCatalogScreen';
+import BusinessSettlementsScreen from '../screens/business/BusinessSettlementsScreen';
 
 const Tab = createBottomTabNavigator();
 
@@ -32,6 +33,11 @@ export default function BusinessTabs() {
         name="Catalog" 
         component={BusinessCatalogScreen} 
         options={{ tabBarLabel: 'Productos', tabBarIcon: ({color}) => <Text style={{color}}>🍔</Text> }} 
+      />
+      <Tab.Screen
+        name="Settlements"
+        component={BusinessSettlementsScreen}
+        options={{ tabBarLabel: 'Liquidaciones', tabBarIcon: ({color}) => <Text style={{color}}>🏦</Text> }}
       />
     </Tab.Navigator>
   );

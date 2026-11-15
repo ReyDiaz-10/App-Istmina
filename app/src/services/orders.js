@@ -22,18 +22,22 @@ export async function quoteDeliveryFee({
 export async function createOrder({
   businessId,
   items,
-  deliveryLatitude = null,
-  deliveryLongitude = null,
+  deliveryLatitude,
+  deliveryLongitude,
+  deliveryAddress,
+  deliveryInstructions = null,
 }) {
-  const { data, error } = await supabase.rpc('create_order_with_delivery', {
+  const { data, error } = await supabase.rpc('create_order_with_delivery_v2', {
     p_business_id: businessId,
-    p_items: items.map(({ id, quantity }) => ({
+    p_items: items.map(({ id, quantity, optionIds = [] }) => ({
       product_id: id,
       quantity,
+      option_ids: optionIds,
     })),
-    p_payment_method: 'wompi',
     p_delivery_latitude: deliveryLatitude,
     p_delivery_longitude: deliveryLongitude,
+    p_delivery_address: deliveryAddress,
+    p_delivery_instructions: deliveryInstructions || null,
   });
 
   if (error) {

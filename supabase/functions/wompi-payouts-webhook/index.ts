@@ -39,6 +39,17 @@ Deno.serve(async (request) => {
 
   if (!Number.isFinite(amount) || !status || (!reference && !payoutId)) return Response.json({ error: "Faltan datos del pago" }, { status: 400 });
   const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const { data: businessApplied, error: businessError } = await supabase.rpc("apply_wompi_business_payout_event", {
+    p_reference: reference,
+    p_provider_payout_id: payoutId,
+    p_provider_transaction_id: transactionId,
+    p_amount_in_cents: amount,
+    p_status: status,
+    p_failure_reason: failure,
+  });
+  if (businessError) return Response.json({ error: "No se pudo aplicar la liquidación", detail: businessError.message }, { status: 500 });
+  if (businessApplied) return Response.json({ received: true });
+
   const { error } = await supabase.rpc("apply_wompi_payout_event", { p_reference: reference, p_provider_payout_id: payoutId, p_provider_transaction_id: transactionId, p_amount_in_cents: amount, p_status: status, p_failure_reason: failure });
   if (error) return Response.json({ error: "No se pudo aplicar el evento", detail: error.message }, { status: 500 });
   return Response.json({ received: true });

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   StyleSheet,
@@ -24,6 +25,8 @@ const CHAT_STATUSES = [
   'pagado',
   'preparando',
   'listo_para_repartidor',
+  'repartidor_asignado',
+  'recogido',
   'en_camino',
   'entregado',
 ];
@@ -37,7 +40,15 @@ const ClientOrdersScreen = ({ navigation }) => {
   const t = useTranslation();
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [cancellingOrderId, setCancellingOrderId] = useState(null);
+  const [deliveryCodes, setDeliveryCodes] = useState({});
+  const [now, setNow] = useState(Date.now());
   const userId = profile?.id || user?.id;
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchOrders = useCallback(async () => {
     if (!userId) {
@@ -52,15 +63,36 @@ const ClientOrdersScreen = ({ navigation }) => {
         .select(`
           *,
           businesses(store_name),
-          drivers(plate_number, profile_id)
+          drivers(plate_number, profile_id),
+          order_refunds(status, status_message, amount_in_cents)
         `)
         .eq('client_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       const ordersWithDrivers = data || [];
+      const codeResults = await Promise.all(ordersWithDrivers
+        .filter((order) => [
+          'pagado',
+          'preparando',
+          'listo_para_repartidor',
+          'repartidor_asignado',
+          'recogido',
+          'en_camino',
+        ].includes(order.status))
+        .map(async (order) => {
+          const { data: verification, error: codeError } = await supabase.rpc('get_order_verification_codes', {
+            p_order_id: order.id,
+          });
+          if (codeError) {
+            console.error('No se pudo cargar el código de entrega:', codeError.message);
+            return null;
+          }
+          return [order.id, verification?.delivery_code];
+        }));
+      setDeliveryCodes(Object.fromEntries(codeResults.filter(Boolean)));
       const profileIds = [...new Set(ordersWithDrivers
-        .filter((order) => order.status === 'en_camino')
+        .filter((order) => ['repartidor_asignado', 'recogido', 'en_camino'].includes(order.status))
         .map((order) => order.drivers?.profile_id)
         .filter(Boolean))];
       if (profileIds.length) {
@@ -117,12 +149,76 @@ const ClientOrdersScreen = ({ navigation }) => {
         }
       });
 
-    return () => supabase.removeChannel(channel);
+    const refundsChannel = supabase
+      .channel(`client-order-refunds:${userId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'order_refunds',
+      }, () => fetchOrders())
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`Realtime order refund subscription failed: ${status}`);
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+      supabase.removeChannel(refundsChannel);
+    };
   }, [fetchOrders, userId]);
+
+  const cancelOrder = (orderId) => {
+    Alert.alert(
+      'Cancelar pedido',
+      '¿Confirmas que quieres cancelar este pedido? Si ya fue pagado, el reembolso se solicitará a Wompi y su confirmación puede tardar.',
+      [
+        { text: 'Volver', style: 'cancel' },
+        {
+          text: 'Cancelar pedido',
+          style: 'destructive',
+          onPress: async () => {
+            setCancellingOrderId(orderId);
+            try {
+              const { data, error } = await supabase.functions.invoke('cancel-order', {
+                body: { orderId, action: 'client_cancel' },
+              });
+              if (error) throw error;
+              if (data?.error) throw new Error(data.error);
+              await fetchOrders();
+              Alert.alert(
+                'Pedido cancelado',
+                data?.refunds?.some((refund) => refund.status === 'pending')
+                  ? 'Wompi recibió la solicitud. El reembolso está pendiente de confirmación.'
+                  : 'El pedido fue cancelado. Consulta aquí el estado del reembolso.',
+              );
+            } catch (error) {
+              Alert.alert('No se pudo cancelar el pedido', error.message);
+            } finally {
+              setCancellingOrderId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const renderOrder = ({ item }) => {
     const driver = item.drivers;
     const chatAvailable = CHAT_STATUSES.includes(item.status);
+    const canCancel = item.status === 'pendiente'
+      || (item.status === 'pagado' && item.cancel_until_at && new Date(item.cancel_until_at).getTime() > now);
+    const refundStatus = item.order_refunds?.[0]?.status;
+    const refundLabels = {
+      requested: 'Reembolso solicitado a Wompi',
+      submitting: 'Enviando solicitud de reembolso',
+      pending: 'Reembolso pendiente de confirmación de Wompi',
+      uncertain: 'Reembolso en conciliación; soporte verificará su estado',
+      error: 'Wompi no aceptó la solicitud de reembolso; requiere revisión',
+      approved: 'Reembolso confirmado por Wompi',
+      declined: 'Wompi rechazó el reembolso; requiere revisión',
+      cancelled: 'Reembolso cancelado; requiere revisión',
+    };
 
     return (
       <View style={[styles.orderCard, { backgroundColor: colors.surface }]}>
@@ -133,11 +229,24 @@ const ClientOrdersScreen = ({ navigation }) => {
           </Text>
         </View>
         <Text style={[styles.details, { color: colors.muted }]}>
-          Pedido #{item.id.slice(0, 8)} · {t('orders.total')} {formatCOP(item.total_amount, locale)}
+          Pedido #{item.order_number || item.id.slice(0, 8)} · {t('orders.total')} {formatCOP(item.total_amount, locale)}
         </Text>
         <OrderStatusAnimation status={item.status} />
+        {deliveryCodes[item.id] ? (
+          <View style={styles.deliveryCodeCard}>
+            <Text style={styles.deliveryCodeLabel}>Código para recibir tu pedido</Text>
+            <Text selectable style={styles.deliveryCode}>{deliveryCodes[item.id]}</Text>
+            <Text style={styles.deliveryCodeHint}>Compártelo con el repartidor solo cuando tengas el pedido.</Text>
+          </View>
+        ) : null}
 
-        {item.status === 'en_camino' && driver && (
+        {refundStatus ? (
+          <Text style={[styles.refundStatus, { color: colors.muted }]}>
+            {refundLabels[refundStatus] || 'Estado del reembolso actualizado'}
+          </Text>
+        ) : null}
+
+        {['repartidor_asignado', 'recogido', 'en_camino'].includes(item.status) && driver && (
           <View style={styles.driverCard}>
             <Image
               source={{ uri: driver.profiles?.avatar_url || 'https://via.placeholder.com/50' }}
@@ -162,6 +271,15 @@ const ClientOrdersScreen = ({ navigation }) => {
           style={styles.chatButton}
           buttonStyle={styles.chatButtonSurface}
         />
+        {canCancel ? (
+          <AnimatedButton
+            title={cancellingOrderId === item.id ? 'Cancelando...' : 'Cancelar pedido'}
+            onPress={() => cancelOrder(item.id)}
+            disabled={cancellingOrderId === item.id}
+            style={styles.cancelButton}
+            buttonStyle={styles.cancelButtonSurface}
+          />
+        ) : null}
         <HelpButton navigation={navigation} context="pedido" orderId={item.id} />
       </View>
     );
@@ -228,6 +346,13 @@ const styles = StyleSheet.create({
   bikeEmoji: { fontSize: 24 },
   chatButton: { alignSelf: 'stretch', marginTop: 12 },
   chatButtonSurface: { width: '100%' },
+  cancelButton: { alignSelf: 'stretch', marginTop: 8 },
+  cancelButtonSurface: { width: '100%', borderColor: '#B3261E' },
+  refundStatus: { fontSize: 13, lineHeight: 18, marginTop: 10 },
+  deliveryCodeCard: { backgroundColor: '#E8F5E9', borderRadius: 10, padding: 12, marginTop: 12, alignItems: 'center' },
+  deliveryCodeLabel: { color: '#1B5E20', fontWeight: '700', fontSize: 13 },
+  deliveryCode: { color: '#1B5E20', fontSize: 26, fontWeight: '900', letterSpacing: 5, marginTop: 2 },
+  deliveryCodeHint: { color: '#33683A', fontSize: 11, textAlign: 'center', marginTop: 4 },
 });
 
 export default ClientOrdersScreen;

@@ -13,13 +13,32 @@ Deno.serve(async (request) => {
   const admin = createClient(url, serviceKey);
   const { data: { user } } = await userClient.auth.getUser();
   if (!user) return Response.json({ error: "Sesión inválida" }, { status: 401, headers: cors });
-  const { data: driver } = await admin.from("drivers").select("id,verification_status").eq("profile_id", user.id).maybeSingle();
-  if (!driver || driver.verification_status !== "aprobado") return Response.json({ error: "Solo repartidores verificados pueden configurar retiros" }, { status: 403, headers: cors });
+  const { data: profile } = await admin.from("profiles").select("role").eq("id", user.id).maybeSingle();
+  if (profile?.role === "repartidor") {
+    const { data: driver } = await admin.from("drivers").select("id,verification_status").eq("profile_id", user.id).maybeSingle();
+    if (!driver || driver.verification_status !== "aprobado") {
+      return Response.json({ error: "Solo repartidores verificados pueden configurar retiros" }, { status: 403, headers: cors });
+    }
+  } else if (profile?.role === "negocio") {
+    const { data: business } = await admin.from("businesses").select("id").eq("profile_id", user.id).maybeSingle();
+    if (!business) return Response.json({ error: "Perfil de negocio no encontrado" }, { status: 403, headers: cors });
+    const { data: verification } = await admin.from("business_verifications")
+      .select("verification_status").eq("business_id", business.id).maybeSingle();
+    if (verification?.verification_status !== "aprobado") {
+      return Response.json({ error: "Solo negocios verificados pueden configurar liquidaciones" }, { status: 403, headers: cors });
+    }
+  } else {
+    return Response.json({ error: "Solo repartidores o negocios verificados pueden consultar bancos" }, { status: 403, headers: cors });
+  }
 
   const apiKey = Deno.env.get("WOMPI_PAYOUT_API_KEY");
   const principalId = Deno.env.get("WOMPI_PAYOUT_PRINCIPAL_ID");
+  const payoutEnvironment = Deno.env.get("WOMPI_PAYOUT_ENV");
   if (!apiKey || !principalId) return Response.json({ error: "Pagos a terceros aún no está configurado" }, { status: 503, headers: cors });
-  const base = Deno.env.get("WOMPI_PAYOUT_ENV") === "production" ? "https://api.payouts.wompi.co/v1" : "https://api.sandbox.payouts.wompi.co/v1";
+  if (payoutEnvironment !== "sandbox" && payoutEnvironment !== "production") {
+    return Response.json({ error: "WOMPI_PAYOUT_ENV debe ser sandbox o production" }, { status: 503, headers: cors });
+  }
+  const base = payoutEnvironment === "production" ? "https://api.payouts.wompi.co/v1" : "https://api.sandbox.payouts.wompi.co/v1";
   const response = await fetch(`${base}/banks`, { headers: { "x-api-key": apiKey, "user-principal-id": principalId } });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) return Response.json({ error: "No se pudo consultar los bancos", provider_status: response.status }, { status: 502, headers: cors });

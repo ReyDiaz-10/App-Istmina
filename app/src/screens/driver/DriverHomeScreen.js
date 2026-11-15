@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   StyleSheet, View, Text, FlatList, Linking,
-  ActivityIndicator, Alert, Switch, SafeAreaView
+  ActivityIndicator, Alert, Switch, SafeAreaView, TextInput
 } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
 import AnimatedButton from '../../components/AnimatedButton';
@@ -26,6 +26,8 @@ const DriverHomeScreen = ({ navigation }) => {
   const [driverData, setDriverData] = useState(null);
   const [availableOrders, setAvailableOrders] = useState([]);
   const [activeOrder, setActiveOrder] = useState(null);
+  const [pickupCode, setPickupCode] = useState('');
+  const [deliveryCode, setDeliveryCode] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -112,7 +114,7 @@ const DriverHomeScreen = ({ navigation }) => {
         .from('orders')
         .select('*, businesses(store_name, address), profiles(full_name)')
         .eq('driver_id', driverId)
-        .eq('status', 'en_camino')
+        .in('status', ['repartidor_asignado', 'recogido', 'en_camino'])
         .maybeSingle();
 
       if (error) throw error;
@@ -139,18 +141,60 @@ const DriverHomeScreen = ({ navigation }) => {
   };
 
   const completeOrder = async () => {
+    if (!/^\d{6}$/.test(deliveryCode)) {
+      Alert.alert('Código requerido', 'Pide al cliente el código de seis dígitos para confirmar la entrega.');
+      return;
+    }
     try {
-      const { error } = await supabase.rpc('driver_complete_order', {
+      const { data, error } = await supabase.rpc('driver_complete_order_with_code', {
         p_order_id: activeOrder.id,
+        p_code: deliveryCode,
       });
       if (error) throw error;
+      if (!data) {
+        Alert.alert('Código incorrecto o bloqueado', 'Después de cinco intentos fallidos, la verificación se bloquea durante 15 minutos.');
+        return;
+      }
 
       Alert.alert('Entrega Exitosa', 'Has completado la entrega correctamente.');
       setActiveOrder(null);
+      setDeliveryCode('');
       fetchAvailableOrders();
     } catch (error) {
       Alert.alert('Error', error.message);
     }
+  };
+
+  const markPickedUp = async () => {
+    if (!/^\d{6}$/.test(pickupCode)) {
+      Alert.alert('Código requerido', 'Pide al negocio el código de seis dígitos para confirmar la recogida.');
+      return;
+    }
+    const { data, error } = await supabase.rpc('driver_verify_order_pickup', {
+      p_order_id: activeOrder.id,
+      p_code: pickupCode,
+    });
+    if (error) {
+      Alert.alert('No se pudo actualizar el pedido', error.message);
+      return;
+    }
+    if (!data) {
+      Alert.alert('Código incorrecto o bloqueado', 'Después de cinco intentos fallidos, la verificación se bloquea durante 15 minutos.');
+      return;
+    }
+    setPickupCode('');
+    await fetchActiveOrder();
+  };
+
+  const startDelivery = async () => {
+    const { error } = await supabase.rpc('driver_start_delivery', {
+      p_order_id: activeOrder.id,
+    });
+    if (error) {
+      Alert.alert('No se pudo iniciar la entrega', error.message);
+      return;
+    }
+    await fetchActiveOrder();
   };
 
   const openDeliveryLocation = async (order) => {
@@ -179,7 +223,7 @@ const DriverHomeScreen = ({ navigation }) => {
   const renderOrderCard = ({ item }) => (
     <View style={styles.orderCard}>
       <View style={styles.orderInfo}>
-        <Text style={styles.storeName}>📦 Recoger en: {item.businesses?.store_name}</Text>
+        <Text style={styles.storeName}>📦 Pedido #{item.order_number || item.id.slice(0, 8)} · {item.businesses?.store_name}</Text>
         <Text style={styles.addressText}>📍 {item.businesses?.address}</Text>
         <Text style={styles.amountText}>
           Ganancia (100% del domicilio): {formatCOP(item.delivery_fee_cop)}
@@ -241,7 +285,7 @@ const DriverHomeScreen = ({ navigation }) => {
       {/* PANEL DE PEDIDO ACTIVO */}
       {activeOrder ? (
         <View style={[styles.activeOrderPanel, { backgroundColor: colors.surface }]}>
-          <Text style={styles.panelTitle}>📦 Pedido en Curso</Text>
+          <Text style={styles.panelTitle}>📦 Pedido #{activeOrder.order_number || activeOrder.id.slice(0, 8)} en curso</Text>
           <View style={styles.activeOrderCard}>
             <Text style={styles.detailLabel}>Recoger en:</Text>
             <Text style={styles.detailValue}>{activeOrder.businesses?.store_name} - {activeOrder.businesses?.address}</Text>
@@ -256,32 +300,68 @@ const DriverHomeScreen = ({ navigation }) => {
               onPress={() => navigation.navigate('OrderChat', { orderId: activeOrder.id })}
             />
             <Text style={styles.detailLabel}>Destino:</Text>
-            {activeOrder.delivery_latitude != null && activeOrder.delivery_longitude != null ? (
-              <>
-                <Text style={styles.detailValue}>
-                  {activeOrder.delivery_latitude}, {activeOrder.delivery_longitude}
-                </Text>
-                <AnimatedButton
-                  title="Abrir ubicación en mapas"
-                  onPress={() => openDeliveryLocation(activeOrder)}
-                  variant="secondary"
-                />
-              </>
-            ) : (
-              <Text style={styles.detailValue}>
-                Coordina la dirección con el cliente por el chat del pedido.
-              </Text>
-            )}
+            <Text style={styles.detailValue}>{activeOrder.delivery_address}</Text>
+            {activeOrder.delivery_instructions ? (
+              <Text style={styles.detailValue}>Referencia: {activeOrder.delivery_instructions}</Text>
+            ) : null}
+            <Text style={styles.detailValue}>
+              GPS: {activeOrder.delivery_latitude}, {activeOrder.delivery_longitude}
+            </Text>
+            <AnimatedButton
+              title="Abrir ubicación en mapas"
+              onPress={() => openDeliveryLocation(activeOrder)}
+              variant="secondary"
+            />
             <Text style={styles.detailLabel}>
               Tu ganancia por domicilio: {formatCOP(activeOrder.delivery_fee_cop)}
             </Text>
             <OrderStatusAnimation status={activeOrder.status} />
-            <AnimatedButton
-              title="Marcar como Entregado"
-              onPress={completeOrder}
-              buttonStyle={[styles.completeBtn, { backgroundColor: theme.primary }]}
-              textStyle={styles.completeBtnText}
-            />
+            {activeOrder.status === 'repartidor_asignado' ? (
+              <>
+                <Text style={styles.codeHint}>Solicita el código de recogida al negocio:</Text>
+                <TextInput
+                  accessibilityLabel="Código de recogida del negocio"
+                  value={pickupCode}
+                  onChangeText={(value) => setPickupCode(value.replace(/\D/g, '').slice(0, 6))}
+                  keyboardType="number-pad"
+                  placeholder="Código de 6 dígitos"
+                  style={styles.codeInput}
+                  maxLength={6}
+                />
+                <AnimatedButton
+                  title="Validar código y confirmar recogida"
+                  onPress={markPickedUp}
+                  buttonStyle={[styles.completeBtn, { backgroundColor: theme.primary }]}
+                  textStyle={styles.completeBtnText}
+                />
+              </>
+            ) : activeOrder.status === 'recogido' ? (
+              <AnimatedButton
+                title="Iniciar ruta al cliente"
+                onPress={startDelivery}
+                buttonStyle={[styles.completeBtn, { backgroundColor: theme.primary }]}
+                textStyle={styles.completeBtnText}
+              />
+            ) : (
+              <>
+                <Text style={styles.codeHint}>Solicita al cliente el código de entrega:</Text>
+                <TextInput
+                  accessibilityLabel="Código de entrega del cliente"
+                  value={deliveryCode}
+                  onChangeText={(value) => setDeliveryCode(value.replace(/\D/g, '').slice(0, 6))}
+                  keyboardType="number-pad"
+                  placeholder="Código de 6 dígitos"
+                  style={styles.codeInput}
+                  maxLength={6}
+                />
+                <AnimatedButton
+                  title="Validar código y marcar entregado"
+                  onPress={completeOrder}
+                  buttonStyle={[styles.completeBtn, { backgroundColor: theme.primary }]}
+                  textStyle={styles.completeBtnText}
+                />
+              </>
+            )}
           </View>
         </View>
       ) : (
@@ -337,6 +417,8 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginTop: 20
   },
   completeBtnText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  codeHint: { fontSize: 13, fontWeight: '700', color: '#424242', marginTop: 12 },
+  codeInput: { borderWidth: 1, borderColor: '#B0BEC5', borderRadius: 9, padding: 12, marginTop: 6, fontSize: 20, letterSpacing: 4, textAlign: 'center', color: '#222222' },
 
   // Available Orders
   availableSection: { flex: 1, padding: 20 },

@@ -4,7 +4,12 @@ import { supabase } from '../api/supabaseClient';
 import { useAppTheme } from '../hooks/useAppTheme';
 import AnimatedButton from './AnimatedButton';
 
-export default function PayoutAccountCard({ account, onSaved }) {
+export default function PayoutAccountCard({
+  account,
+  onSaved,
+  saveFunction = 'save_driver_payout_account',
+  title = 'Cuenta para recibir retiros',
+}) {
   const { colors } = useAppTheme();
   const [banks, setBanks] = useState([]);
   const [bank, setBank] = useState(null);
@@ -14,24 +19,45 @@ export default function PayoutAccountCard({ account, onSaved }) {
   const [documentNumber, setDocumentNumber] = useState('');
   const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(!account);
+  const [bankError, setBankError] = useState(null);
   useEffect(() => {
-    supabase.functions.invoke('payout-banks').then(({ data, error }) => {
-      if (!error && data?.banks) setBanks(data.banks);
-    });
+    let active = true;
+    const loadBanks = async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('payout-banks');
+        if (error) throw error;
+        if (!Array.isArray(data?.banks)) throw new Error('El servicio no devolvió bancos.');
+        if (active) setBanks(data.banks);
+      } catch (error) {
+        if (active) setBankError(error.message);
+      }
+    };
+    loadBanks();
+    return () => {
+      active = false;
+    };
   }, []);
   const save = async () => {
     if (!bank || !accountNumber || !documentNumber) return Alert.alert('Faltan datos', 'Selecciona un banco e ingresa tu cuenta y documento.');
     setSaving(true);
-    const { error } = await supabase.rpc('save_driver_payout_account', { p_bank_id: String(bank.id), p_bank_name: String(bank.name), p_account_type: accountType, p_account_number: accountNumber, p_legal_id_type: documentType, p_legal_id: documentNumber });
-    setSaving(false);
-    if (error) return Alert.alert('No se pudo guardar', error.message);
-    setAccountNumber(''); setDocumentNumber(''); setShowForm(false); onSaved?.();
-    Alert.alert('Cuenta guardada', 'Los datos bancarios quedaron cifrados y solo se muestra su terminación.');
+    try {
+      const { error } = await supabase.rpc(saveFunction, { p_bank_id: String(bank.id), p_bank_name: String(bank.name), p_account_type: accountType, p_account_number: accountNumber, p_legal_id_type: documentType, p_legal_id: documentNumber });
+      if (error) throw error;
+      setAccountNumber('');
+      setDocumentNumber('');
+      setShowForm(false);
+      onSaved?.();
+      Alert.alert('Cuenta guardada', 'Los datos bancarios quedaron cifrados y solo se muestra su terminación.');
+    } catch (error) {
+      Alert.alert('No se pudo guardar', error.message);
+    } finally {
+      setSaving(false);
+    }
   };
   const fieldStyle = [styles.input, { color: colors.text, borderColor: colors.border, backgroundColor: colors.input }];
   return (
     <View style={[styles.box, { borderColor: colors.border }]}>
-      <Text style={[styles.title, { color: colors.text }]}>Cuenta para recibir retiros</Text>
+      <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
       {!showForm && account ? <>
         <Text style={[styles.copy, { color: colors.muted }]}>{account.bank_name} · {account.account_type} ···· {account.account_number_last4}</Text>
         <AnimatedButton title="Actualizar cuenta" variant="secondary" onPress={() => setShowForm(true)} />
@@ -39,7 +65,9 @@ export default function PayoutAccountCard({ account, onSaved }) {
         {banks.length ? <>
           <Text style={[styles.hint, { color: colors.muted }]}>Bancos disponibles (toca para elegir)</Text>
           <View style={styles.bankList}>{banks.map((item) => <Text key={item.id} onPress={() => setBank(item)} style={[styles.bank, { color: colors.text, borderColor: bank?.id === item.id ? colors.primary : colors.border }]}>{item.name}</Text>)}</View>
-        </> : <ActivityIndicator color={colors.primary} />}
+        </> : bankError
+          ? <Text accessibilityRole="alert" style={[styles.hint, { color: '#B3261E' }]}>{bankError}</Text>
+          : <ActivityIndicator color={colors.primary} />}
         <TextInput value={accountNumber} onChangeText={setAccountNumber} placeholder="Número de cuenta" placeholderTextColor={colors.muted} keyboardType="number-pad" secureTextEntry style={fieldStyle} />
         <View style={styles.inline}>{['AHORROS', 'CORRIENTE'].map((value) => <Text key={value} onPress={() => setAccountType(value)} style={[styles.choice, { color: colors.text, borderColor: accountType === value ? colors.primary : colors.border }]}>{value}</Text>)}</View>
         <View style={styles.inline}>{['CC', 'CE', 'NIT'].map((value) => <Text key={value} onPress={() => setDocumentType(value)} style={[styles.choice, { color: colors.text, borderColor: documentType === value ? colors.primary : colors.border }]}>{value}</Text>)}</View>

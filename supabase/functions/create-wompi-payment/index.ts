@@ -13,6 +13,9 @@ const jsonResponse = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -60,30 +63,40 @@ serve(async (request) => {
     let businessId: string;
     let amountInCents: number;
     let description: string;
+    let orderPaymentReservation = false;
 
     if (typeof body.orderId === "string") {
-      const { data: order, error } = await admin
-        .from("orders")
-        .select("id, business_id, total_amount, status, payment_method")
-        .eq("id", body.orderId)
-        .eq("client_id", user.id)
-        .maybeSingle();
-
+      const { data: reservation, error } = await admin.rpc("reserve_order_payment_link", {
+        p_order_id: body.orderId,
+        p_client_id: user.id,
+      });
       if (error) throw error;
-      if (!order || order.status !== "pendiente" || order.payment_method !== "wompi") {
+      if (reservation?.action === "reuse" && typeof reservation.payment_url === "string") {
+        return jsonResponse({
+          payment_url: reservation.payment_url,
+          order_id: body.orderId,
+          purpose: "order",
+        });
+      }
+      if (reservation?.action === "wait") {
+        return jsonResponse({
+          error: "The payment link is being created or requires reconciliation. Do not retry yet.",
+        }, 409);
+      }
+      if (reservation?.action !== "create") {
         return jsonResponse({ error: "Pending Wompi order not found" }, 404);
       }
-
-      const cents = Math.round(Number(order.total_amount) * 100);
+      const cents = Number(reservation.amount_in_cents);
       if (!Number.isSafeInteger(cents) || cents <= 0) {
         return jsonResponse({ error: "Order total is invalid" }, 400);
       }
 
       purpose = "order";
-      orderId = order.id;
-      businessId = order.business_id;
+      orderId = body.orderId;
+      businessId = reservation.business_id;
       amountInCents = cents;
-      description = `Pedido IstmiYa ${order.id.slice(0, 8)}`;
+      description = `Pedido IstmiYa ${orderId.slice(0, 8)}`;
+      orderPaymentReservation = true;
     } else {
       if (body.purpose !== "wallet" && body.purpose !== "subscription") {
         return jsonResponse({ error: "A valid orderId or business payment purpose is required" }, 400);
@@ -111,9 +124,9 @@ serve(async (request) => {
       businessId = business.id;
       const amountEnv = purpose === "wallet"
         ? Deno.env.get("WOMPI_WALLET_TOPUP_AMOUNT_COP")
-        : undefined;
+        : Deno.env.get("WOMPI_SUBSCRIPTION_AMOUNT_COP");
       const amountCop = purpose === "subscription"
-        ? 35000
+        ? Number(amountEnv || 35000)
         : amountEnv
           ? Number(amountEnv)
           : 50000;
@@ -131,43 +144,106 @@ serve(async (request) => {
     const baseUrl = wompiEnvironment === "production"
       ? "https://production.wompi.co/v1"
       : "https://sandbox.wompi.co/v1";
-    const paymentResponse = await fetch(`${baseUrl}/payment_links`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${wompiPrivateKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: description,
-        description,
-        single_use: true,
-        collect_shipping: false,
-        currency: "COP",
-        amount_in_cents: amountInCents,
-      }),
-    });
-    const paymentBody = await paymentResponse.json();
+    let paymentResponse: Response;
+    try {
+      paymentResponse = await fetch(`${baseUrl}/payment_links`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${wompiPrivateKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: description,
+          description,
+          single_use: true,
+          collect_shipping: false,
+          currency: "COP",
+          amount_in_cents: amountInCents,
+        }),
+      });
+    } catch (error) {
+      if (orderPaymentReservation && orderId) {
+        const { error: reservationError } = await admin.rpc("mark_order_payment_link_uncertain", {
+          p_order_id: orderId,
+          p_client_id: user.id,
+          p_failure_reason: error instanceof Error ? error.message : "Network failure contacting Wompi",
+        });
+        if (reservationError) console.error("Could not mark uncertain payment link:", reservationError.message);
+      }
+      return jsonResponse({ error: "Payment link creation is uncertain; do not retry until reconciled." }, 502);
+    }
+    let paymentBody: Record<string, unknown>;
+    try {
+      const parsedBody: unknown = await paymentResponse.json();
+      paymentBody = isRecord(parsedBody) ? parsedBody : {};
+    } catch (error) {
+      if (orderPaymentReservation && orderId) {
+        const { error: reservationError } = await admin.rpc("mark_order_payment_link_uncertain", {
+          p_order_id: orderId,
+          p_client_id: user.id,
+          p_failure_reason: "Wompi returned a response that could not be parsed",
+        });
+        if (reservationError) console.error("Could not mark invalid Wompi response:", reservationError.message);
+      }
+      console.error("Could not parse Wompi payment link response:", error);
+      return jsonResponse({ error: "Payment link creation is uncertain; do not retry until reconciled." }, 502);
+    }
     if (!paymentResponse.ok) {
       console.error("Wompi payment link creation failed", paymentBody);
+      if (orderPaymentReservation && orderId) {
+        const { error: reservationError } = await admin.rpc("fail_order_payment_link", {
+          p_order_id: orderId,
+          p_client_id: user.id,
+          p_failure_reason: `Wompi returned HTTP ${paymentResponse.status}`,
+        });
+        if (reservationError) console.error("Could not release payment link reservation:", reservationError.message);
+      }
       return jsonResponse({ error: "Wompi could not create the payment link" }, 502);
     }
 
-    const paymentLinkId = paymentBody?.data?.id;
+    const paymentData = isRecord(paymentBody.data) ? paymentBody.data : {};
+    const paymentLinkId = paymentData.id;
     if (typeof paymentLinkId !== "string" || !paymentLinkId) {
+      if (orderPaymentReservation && orderId) {
+        const { error: reservationError } = await admin.rpc("mark_order_payment_link_uncertain", {
+          p_order_id: orderId,
+          p_client_id: user.id,
+          p_failure_reason: "Wompi returned a successful response without a payment link ID",
+        });
+        if (reservationError) console.error("Could not mark incomplete payment link response:", reservationError.message);
+      }
       throw new Error("Wompi response did not include a payment link id");
     }
 
-    const { error: linkError } = await admin.from("wompi_payment_links").insert({
-      payment_link_id: paymentLinkId,
-      purpose,
-      order_id: orderId,
-      business_id: businessId,
-      amount_in_cents: amountInCents,
-    });
+    const paymentUrl = typeof paymentData.permalink === "string" && paymentData.permalink
+      ? paymentData.permalink
+      : `https://checkout.wompi.co/l/${paymentLinkId}`;
+    const { error: linkError } = orderPaymentReservation && orderId
+      ? await admin.rpc("complete_order_payment_link", {
+        p_order_id: orderId,
+        p_client_id: user.id,
+        p_payment_link_id: paymentLinkId,
+        p_payment_url: paymentUrl,
+      })
+      : await admin.from("wompi_payment_links").insert({
+        payment_link_id: paymentLinkId,
+        purpose,
+        order_id: orderId,
+        business_id: businessId,
+        amount_in_cents: amountInCents,
+      });
+    if (linkError && orderPaymentReservation && orderId) {
+      const { error: reservationError } = await admin.rpc("mark_order_payment_link_uncertain", {
+        p_order_id: orderId,
+        p_client_id: user.id,
+        p_failure_reason: `Could not persist Wompi link ${paymentLinkId}`,
+      });
+      if (reservationError) console.error("Could not mark unpersisted Wompi link:", reservationError.message);
+    }
     if (linkError) throw linkError;
 
     return jsonResponse({
-      payment_url: paymentBody.data.permalink || `https://checkout.wompi.co/l/${paymentLinkId}`,
+      payment_url: paymentUrl,
       order_id: orderId,
       purpose,
     });

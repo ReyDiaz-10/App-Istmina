@@ -64,7 +64,7 @@ supabase db push
 
 Revisa el estado de la base antes de aplicar cambios. Las migraciones en `supabase/migrations/` definen los roles, estados, permisos, billetera, suscripciones, operaciones de pedidos, bandeja de soporte, perfiles pendientes de verificación y moderación del chat. `0006_role_onboarding_and_verification.sql` crea los datos asociados al registro y protege la aprobación; `0007_chat_moderation.sql` exige consentimiento para compartir números y agrega métricas del negocio; `0009_allow_superadmin_profile_role.sql` permite el rol SuperAdmin en instalaciones cuyo esquema valida los roles con una restricción `CHECK`; `0010_public_verified_business_lookup.sql` permite listar negocios aprobados sin conceder acceso público a los datos legales de verificación; `0011_customer_profile_username.sql` conserva el nombre de usuario legado; `0012_customer_profile_nickname.sql` agrega el apodo independiente que se usa en el saludo de bienvenida. No ejecutes una migración manualmente en producción sin revisar primero su impacto y contar con respaldo.
 
-La migración inicial declara cada tipo una sola vez para permitir crear un sandbox vacío. No vuelvas a editar ni reaplicar migraciones que ya estén registradas en un entorno compartido o de producción. Las migraciones `0013`–`0019` agregan tarifas, administración, pagos a repartidores, auditoría de pedidos bloqueados y enlazan el usuario administrador existente con el rol interno `admin`.
+La migración inicial declara cada tipo una sola vez para permitir crear un sandbox vacío. No vuelvas a editar ni reaplicar migraciones que ya estén registradas en un entorno compartido o de producción. Las migraciones `0013`–`0019` agregan tarifas, administración, pagos a repartidores, auditoría de pedidos bloqueados y enlazan el usuario administrador existente con el rol interno `admin`. Las migraciones `0020`–`0022` agregan estados de entrega, dirección y cancelaciones con reembolsos, enlaces de pago idempotentes y liquidaciones semanales de ventas a comercios. La `0023_catalog_delivery_reconciliation.sql` agrega inventario, variantes/extras, número de pedido único, códigos de recogida/entrega, memoria privada del domicilio, conciliación administrativa, expiración de pedidos impagos y límite de intentos de verificación.
 
 Después de aplicar `0006` y `0007`, el registro de negocio/repartidor crea su perfil relacionado en el servidor. Los negocios quedan inactivos y los repartidores desconectados hasta la revisión administrativa. Los documentos del repartidor se guardan en buckets privados; la imagen del local se publica para mostrarla en el marketplace. Las migraciones `0018` y `0019` añaden `admin` como rol válido, permiten sus permisos en las políticas existentes y enlazan la cuenta Auth `neildiazusb@gmail.com` con `profiles.role = 'admin'`. Las cuentas `superadmin` antiguas siguen aceptándose por compatibilidad.
 
@@ -80,7 +80,7 @@ supabase secrets set WOMPI_ENVIRONMENT=sandbox WOMPI_PRIVATE_KEY=prv_test_REEMPL
 Opcionalmente, configura los importes de recarga y suscripción (valores en pesos colombianos):
 
 ```powershell
-supabase secrets set WOMPI_WALLET_TOPUP_AMOUNT_COP=50000 WOMPI_SUBSCRIPTION_AMOUNT_COP=30000
+supabase secrets set WOMPI_WALLET_TOPUP_AMOUNT_COP=50000 WOMPI_SUBSCRIPTION_AMOUNT_COP=35000
 ```
 
 Despliega las funciones:
@@ -88,6 +88,7 @@ Despliega las funciones:
 ```powershell
 supabase functions deploy create-wompi-payment
 supabase functions deploy wompi-webhook --no-verify-jwt
+supabase functions deploy cancel-order
 ```
 
 El webhook desactiva la verificación JWT del gateway porque Wompi no envía un JWT de Supabase; la función valida la firma del evento antes de cambiar datos.
@@ -98,7 +99,13 @@ En el panel de Wompi, configura la URL de eventos de **Sandbox**:
 https://TU_PROJECT_REF.supabase.co/functions/v1/wompi-webhook
 ```
 
-Mantén Sandbox y Producción separados. Para pasar a producción, configura las llaves privadas y secreto de eventos de producción, usa `WOMPI_ENVIRONMENT=production` y registra la URL de eventos correspondiente al ambiente productivo. El webhook valida la firma y ambiente del evento antes de actualizar la orden, billetera o suscripción.
+La suscripción mensual cuesta **$35.000 COP**; configura `WOMPI_SUBSCRIPTION_AMOUNT_COP=35000` para mantener el cobro alineado con la app. Cada pedido reutiliza su enlace de pago; si la creación de un enlace queda en estado incierto, no se genera otro hasta conciliarlo. El cliente puede cancelar antes del pago o durante los cinco minutos posteriores a la aprobación, siempre que el comercio no haya aceptado. El comercio puede rechazar un pedido pagado que aún no haya aceptado.
+
+La cancelación de un pedido pagado solicita el reembolso total por la API de Wompi. El reembolso es asíncrono: solo `APPROVED` confirma que se devolvió el dinero; `PENDING`, errores y solicitudes inciertas deben conciliarse y no deben reenviarse automáticamente. Habilita los reembolsos en la cuenta Wompi y configura el webhook para recibir `refund.updated`.
+
+Mantén Sandbox y Producción separados. Para pasar a producción, configura las llaves privadas y secreto de eventos de producción, usa `WOMPI_ENVIRONMENT=production` y registra la URL de eventos correspondiente al ambiente productivo. El webhook valida la firma y ambiente del evento antes de actualizar pedidos, pagos, billeteras, suscripciones o reembolsos.
+
+Aplica las migraciones nuevas con el flujo habitual de Supabase después de revisar el respaldo y el ambiente destino. El pedido exige una dirección o indicaciones escritas y ubicación GPS para cotizar el domicilio; no se exige un campo de barrio. La última dirección e indicaciones quedan guardadas en una tabla privada del perfil y se pueden confirmar o editar en el próximo pedido. El inventario controlado se reserva al crear el pedido. Un pedido pendiente sin pago o intento de pago incierto se cancela automáticamente tras 30 minutos y devuelve las existencias; transacciones pendientes, aprobadas o inciertas conservan la reserva para evitar vender stock comprometido. Los reintentos de pago pueden hacerse durante la ventana de 30 minutos. Un pago aprobado que llegue después de cancelar el pedido genera una solicitud para conciliación y reembolso manual. Los códigos de seis dígitos validan la recogida con el negocio y la entrega con el cliente; cinco códigos incorrectos bloquean esa verificación por 15 minutos. El estado de entrega pasa por repartidor asignado, recogido, en camino y entregado.
 
 ## 6. Notificaciones de quejas por correo
 
@@ -180,6 +187,54 @@ Output Directory: app/dist
 El comando `expo export --platform web` sustituye al comando antiguo `expo export:web`, que no es el formato recomendado para los SDK recientes de Expo.
 
 ## 10. Probar los flujos
+
+### Validación local
+
+Desde PowerShell, en un entorno Node.js 22:
+
+```powershell
+Set-Location 'D:\App-Istmina\app'
+npm.cmd test
+npm.cmd run lint
+npm.cmd run build:web
+```
+
+`npm test` comprueba la búsqueda y los filtros de categorías del marketplace. El lint depende de ESLint y de que esté disponible la configuración Expo instalada; si falla por versión o herramienta ausente, conserva el error completo y no lo interpretes como una prueba aprobada.
+
+La suite financiera es opt-in y crea pedidos, cambia estados en la base de datos y consume inventario. Ejecútala solo en un proyecto Supabase descartable con un cliente, un comercio con suscripción o saldo, un producto de prueba y dos repartidores aprobados/disponibles. Define estas variables en el entorno temporal de PowerShell (no las guardes en `.env` ni en Git):
+
+- `ISTMIYA_TEST_CONFIRM_DISPOSABLE_SUPABASE=true`
+- `ISTMIYA_TEST_SUPABASE_URL`, `ISTMIYA_TEST_SUPABASE_ANON_KEY` y `ISTMIYA_TEST_SUPABASE_SERVICE_ROLE_KEY`
+- `ISTMIYA_TEST_CLIENT_EMAIL` / `ISTMIYA_TEST_CLIENT_PASSWORD`
+- `ISTMIYA_TEST_BUSINESS_EMAIL` / `ISTMIYA_TEST_BUSINESS_PASSWORD`
+- `ISTMIYA_TEST_DRIVER_ONE_EMAIL` / `ISTMIYA_TEST_DRIVER_ONE_PASSWORD`
+- `ISTMIYA_TEST_DRIVER_TWO_EMAIL` / `ISTMIYA_TEST_DRIVER_TWO_PASSWORD`
+- `ISTMIYA_TEST_BUSINESS_ID`, `ISTMIYA_TEST_PRODUCT_ID`, `ISTMIYA_TEST_LATITUDE` y `ISTMIYA_TEST_LONGITUDE`
+- Opcional: `ISTMIYA_TEST_OPTION_IDS` como arreglo JSON de IDs de opciones para probar una variante o extra obligatorios.
+
+Con esas variables cargadas en la misma sesión de PowerShell:
+
+```powershell
+Set-Location 'D:\App-Istmina\app'
+npm.cmd run test:financial
+```
+
+La prueba llama procedimientos de base de datos con eventos simulados: no compra en Wompi ni valida una firma real de webhook. No uses las credenciales de un proyecto productivo ni las compartas en la salida de comandos.
+
+### Integración segura en Sandbox
+
+1. Crea un proyecto Supabase desechable o usa el stack local; no conectes cuentas reales ni datos de producción.
+2. Aplica migraciones hasta `0023` y confirma en Supabase que `create_order_with_delivery_v2`, `driver_verify_order_pickup`, `driver_complete_order_with_code` y `admin_financial_exceptions` existen. Verifica también que `order_number` sea único y que RLS oculte `order_verification_secrets` y `customer_delivery_preferences`.
+3. Configura únicamente llaves Sandbox de Wompi como secretos de Edge Functions, despliega las funciones de pago, cancelación y webhooks, y apunta los webhooks al proyecto de prueba. Confirma la firma y ambiente en los logs de Supabase.
+4. Crea usuarios de prueba separados (cliente, comercio, repartidor y administrador), un negocio activo con suscripción o billetera con saldo suficiente, un producto con inventario conocido y una cuenta bancaria de prueba si Sandbox habilita Pagos a Terceros.
+5. Ejecuta un pedido de prueba con inventario limitado. Revisa el subtotal y el número consecutivo; selecciona una variante y un extra. Un producto deshabilitado, una opción ajena al producto y una cantidad superior al stock deben ser rechazados. Cancela otro pedido y confirma que el inventario reservado se devuelve una sola vez.
+6. Completa pagos aprobados y rechazados desde el checkout Sandbox. Repite el mismo evento firmado para comprobar idempotencia. Prueba un reintento tras rechazo, una cancelación antes y después del pago, un reembolso pendiente y un resultado incierto. Confirma que un caso incierto no se reenvíe automáticamente y que solo `APPROVED` confirme el reembolso. Verifica que un pedido impago se cancele al cumplir 30 minutos, que los pagos pendientes o inciertos conserven el stock y que un rechazo terminal permita expirar y restaurar el inventario.
+7. Con dos repartidores disponibles, intenta aceptar el mismo pedido simultáneamente; solo una llamada debe completarse. Verifica que un código de recogida incorrecto no avance el estado y que el correcto sí lo haga. Repite con el código de entrega; tras cinco intentos incorrectos confirma que el código correcto queda bloqueado durante 15 minutos y que el pedido no avanza.
+8. Revisa el panel de conciliación de SuperAdmin con un caso de pago incierto, reembolso pendiente y liquidación fallida. Añade nota y marca revisado; confirma que esto **no** cambie el estado real de Wompi ni reenvíe dinero.
+9. Para liquidaciones, configura en el proyecto descartable los secretos de Vault y Edge Functions documentados en [payouts_setup.md](./docs/payouts_setup.md), despliega `payout-banks`, `process-payouts` y `wompi-payouts-webhook`, valida el trabajo cron, y ejecuta la transferencia solo con las opciones Sandbox habilitadas por Wompi.
+10. Guarda resultados, referencias y logs sin copiar credenciales. Si Sandbox no permite Pagos a Terceros, solicita su habilitación a Wompi antes de dar por validado ese flujo.
+
+Los pasos que requieren conectividad con Wompi, secretos, un proyecto Supabase configurado y aprobación de Pagos a Terceros no se pueden verificar solo con la compilación local. No marques esas validaciones como hechas hasta completar el ciclo anterior.
 
 1. Abre la app sin iniciar sesión: el inicio de cliente debe estar disponible como invitado.
 2. Entra a un negocio, agrega un producto e intenta pagar para probar el paso de autenticación.

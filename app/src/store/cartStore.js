@@ -6,28 +6,34 @@ export const useCartStore = create((set, get) => ({
 
   addItem: (product) => {
     const currentItems = get().items;
-    const existingItem = currentItems.find(item => item.id === product.id);
+    const optionIds = [...(product.optionIds || [])].sort();
+    const cartKey = `${product.id}:${optionIds.join(',')}`;
+    const existingItem = currentItems.find((item) => (item.cartKey || `${item.id}:`) === cartKey);
 
     if (existingItem) {
       set({
         items: currentItems.map(item => 
-          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+          (item.cartKey || `${item.id}:`) === cartKey
+            ? { ...item, quantity: item.quantity + 1 }
+            : item
         ),
       });
     } else {
-      set({ items: [...currentItems, { ...product, quantity: 1 }] });
+      set({ items: [...currentItems, { ...product, optionIds, cartKey, quantity: 1 }] });
     }
   },
 
-  removeItem: (productId) => {
-    set({ items: get().items.filter(item => item.id !== productId) });
+  removeItem: (cartKey) => {
+    set({ items: get().items.filter(item => (item.cartKey || `${item.id}:`) !== cartKey) });
   },
 
-  updateQuantity: (productId, amount) => {
+  updateQuantity: (cartKey, amount) => {
     const currentItems = get().items;
     set({
       items: currentItems.map(item => 
-        item.id === productId ? { ...item, quantity: Math.max(1, item.quantity + amount) } : item
+        (item.cartKey || `${item.id}:`) === cartKey
+          ? { ...item, quantity: Math.max(1, item.quantity + amount) }
+          : item
       ),
     });
   },

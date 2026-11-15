@@ -21,6 +21,8 @@ const CHAT_STATUSES = [
   'pagado',
   'preparando',
   'listo_para_repartidor',
+  'repartidor_asignado',
+  'recogido',
   'en_camino',
   'entregado',
 ];
@@ -32,6 +34,7 @@ const BusinessOrdersScreen = ({ navigation }) => {
   const locale = usePreferencesStore((state) => state.language);
   const [businessId, setBusinessId] = useState(null);
   const [orders, setOrders] = useState([]);
+  const [pickupCodes, setPickupCodes] = useState({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -68,11 +71,24 @@ const BusinessOrdersScreen = ({ navigation }) => {
     try {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, order_items(quantity, unit_price, products(name))')
+        .select('*, order_items(quantity, unit_price, products(name), order_item_options(option_group, name, price_delta))')
         .eq('business_id', businessId)
         .order('created_at', { ascending: false });
       if (error) throw error;
       setOrders(data || []);
+      const codeResults = await Promise.all((data || [])
+        .filter((order) => ['pagado', 'preparando', 'listo_para_repartidor', 'repartidor_asignado'].includes(order.status))
+        .map(async (order) => {
+          const { data: verification, error: codeError } = await supabase.rpc('get_order_verification_codes', {
+            p_order_id: order.id,
+          });
+          if (codeError) {
+            console.error('No se pudo cargar el código de recogida:', codeError.message);
+            return null;
+          }
+          return [order.id, verification?.pickup_code];
+        }));
+      setPickupCodes(Object.fromEntries(codeResults.filter(Boolean)));
     } catch (error) {
       console.error('Error cargando pedidos del negocio:', error.message);
     } finally {
@@ -131,20 +147,59 @@ const BusinessOrdersScreen = ({ navigation }) => {
     }
   };
 
+  const rejectOrder = (orderId) => {
+    Alert.alert(
+      'Rechazar pedido',
+      '¿Confirmas que el comercio no puede aceptar este pedido? Si ya fue pagado, se solicitará un reembolso automático a Wompi.',
+      [
+        { text: 'Volver', style: 'cancel' },
+        {
+          text: 'Rechazar pedido',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const { data, error } = await supabase.functions.invoke('cancel-order', {
+                body: { orderId, action: 'business_reject' },
+              });
+              if (error) throw error;
+              if (data?.error) throw new Error(data.error);
+              await fetchOrders();
+              Alert.alert(
+                'Pedido rechazado',
+                data?.refunds?.some((refund) => refund.status === 'pending')
+                  ? 'El reembolso quedó pendiente de confirmación de Wompi.'
+                  : 'El pedido fue cancelado y el reembolso será visible para el cliente.',
+              );
+            } catch (error) {
+              Alert.alert('No se pudo rechazar el pedido', error.message);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const renderOrder = ({ item }) => (
     <View style={[styles.orderCard, { backgroundColor: colors.surface }]}>
       <View style={styles.orderHeader}>
-        <Text style={[styles.orderId, { color: colors.text }]}>Pedido #{item.id.slice(0, 8)}</Text>
+        <Text style={[styles.orderId, { color: colors.text }]}>Pedido #{item.order_number || item.id.slice(0, 8)}</Text>
         <Text style={[styles.status, { color: theme.primary }]}>
           {item.status.replace(/_/g, ' ').toUpperCase()}
         </Text>
       </View>
       <View style={styles.orderItems}>
         {item.order_items?.map((product, index) => (
-          <Text key={`${item.id}-${index}`} style={styles.itemText}>
-            {product.quantity} × {product.products?.name || 'Producto'} — $
-            {formatCOP(product.unit_price, locale)}
-          </Text>
+          <View key={`${item.id}-${index}`}>
+            <Text style={styles.itemText}>
+              {product.quantity} × {product.products?.name || 'Producto'} — $
+              {formatCOP(product.unit_price, locale)}
+            </Text>
+            {product.order_item_options?.map((option) => (
+              <Text key={`${item.id}-${index}-${option.name}`} style={styles.itemOptionText}>
+                · {option.option_group}: {option.name}
+              </Text>
+            ))}
+          </View>
         ))}
       </View>
       <View style={styles.amountBreakdown}>
@@ -159,13 +214,29 @@ const BusinessOrdersScreen = ({ navigation }) => {
         </Text>
       </View>
       <OrderStatusAnimation status={item.status} />
+      {pickupCodes[item.id] ? (
+        <View style={styles.pickupCodeCard}>
+          <Text style={styles.pickupCodeLabel}>Código de recogida para validar con el repartidor</Text>
+          <Text selectable style={styles.pickupCode}>{pickupCodes[item.id]}</Text>
+          <Text style={styles.pickupCodeHint}>Comparte el código con el repartidor cuando llegue al local.</Text>
+        </View>
+      ) : null}
       {item.status === 'pagado' && (
-        <AnimatedButton
-          title="Aceptar pedido (comisión 10% si no hay suscripción)"
-          onPress={() => acceptOrder(item.id)}
-          style={styles.action}
-          buttonStyle={styles.actionSurface}
-        />
+        <>
+          <AnimatedButton
+            title="Aceptar pedido (comisión 10% si no hay suscripción)"
+            onPress={() => acceptOrder(item.id)}
+            style={styles.action}
+            buttonStyle={styles.actionSurface}
+          />
+          <AnimatedButton
+            title="Rechazar pedido y devolver pago"
+            variant="secondary"
+            onPress={() => rejectOrder(item.id)}
+            style={styles.action}
+            buttonStyle={styles.actionSurface}
+          />
+        </>
       )}
       {item.status === 'preparando' && (
         <AnimatedButton
@@ -220,6 +291,7 @@ const styles = StyleSheet.create({
   status: { fontSize: 11, fontWeight: 'bold', marginLeft: 8 },
   orderItems: { marginVertical: 8 },
   itemText: { fontSize: 14, color: '#666666', marginBottom: 3 },
+  itemOptionText: { fontSize: 12, color: '#687078', marginLeft: 10, marginBottom: 2 },
   amountBreakdown: { marginTop: 6 },
   amountText: { fontSize: 13, color: '#666666', marginTop: 3, textAlign: 'right' },
   totalText: { fontSize: 17, fontWeight: 'bold', color: '#333333', textAlign: 'right', marginTop: 6 },
@@ -227,6 +299,10 @@ const styles = StyleSheet.create({
   actionSurface: { width: '100%' },
   chatSurface: { width: '100%', backgroundColor: '#FFFFFF' },
   empty: { textAlign: 'center', marginTop: 50, color: '#757575' },
+  pickupCodeCard: { backgroundColor: '#FFF3E0', borderRadius: 10, padding: 12, marginTop: 12, alignItems: 'center' },
+  pickupCodeLabel: { color: '#7A4300', fontSize: 12, fontWeight: '700', textAlign: 'center' },
+  pickupCode: { color: '#7A4300', fontSize: 24, fontWeight: '900', letterSpacing: 4, marginTop: 2 },
+  pickupCodeHint: { color: '#80572C', fontSize: 11, textAlign: 'center', marginTop: 4 },
 });
 
 export default BusinessOrdersScreen;

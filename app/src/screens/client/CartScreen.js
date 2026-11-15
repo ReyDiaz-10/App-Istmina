@@ -6,8 +6,10 @@ import {
   AppState,
   FlatList,
   Linking,
+  Pressable,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import * as Location from 'expo-location';
@@ -31,6 +33,10 @@ const CartScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(false);
   const [deliveryMode, setDeliveryMode] = useState(null);
   const [deliveryLocation, setDeliveryLocation] = useState(null);
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [deliveryInstructions, setDeliveryInstructions] = useState('');
+  const [hasSavedAddress, setHasSavedAddress] = useState(false);
+  const [addressChoice, setAddressChoice] = useState(null);
   const [deliveryQuote, setDeliveryQuote] = useState(null);
   const [deliveryLoading, setDeliveryLoading] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
@@ -41,9 +47,35 @@ const CartScreen = ({ navigation }) => {
 
   useEffect(() => {
     let active = true;
+    const loadSavedAddress = async () => {
+      if (!user?.id) {
+        setHasSavedAddress(false);
+        setAddressChoice(null);
+        return;
+      }
+      try {
+        const { data, error } = await supabase.rpc('get_my_delivery_preferences');
+        if (error) throw error;
+        if (!active || !data?.delivery_address) return;
+        setDeliveryAddress(data.delivery_address);
+        setDeliveryInstructions(data.delivery_instructions || '');
+        setHasSavedAddress(true);
+      } catch (error) {
+        console.error('No se pudo cargar la dirección habitual:', error.message);
+      }
+    };
+    loadSavedAddress();
+    return () => { active = false; };
+  }, [user?.id]);
+
+  useEffect(() => {
+    let active = true;
     setDeliveryMode(null);
     setDeliveryQuote(null);
     setDeliveryError(null);
+    setDeliveryLocation(null);
+    setDeliveryAddress('');
+    setDeliveryInstructions('');
     if (!businessId) return undefined;
 
     const loadDeliveryMode = async () => {
@@ -73,7 +105,7 @@ const CartScreen = ({ navigation }) => {
     if (
       !businessId
       || !deliveryMode
-      || (deliveryMode === 'istmiya_dynamic' && !deliveryLocation)
+      || !deliveryLocation
     ) {
       setDeliveryLoading(false);
       return undefined;
@@ -85,12 +117,8 @@ const CartScreen = ({ navigation }) => {
       try {
         const quote = await quoteDeliveryFee({
           businessId,
-          deliveryLatitude: deliveryMode === 'istmiya_dynamic'
-            ? deliveryLocation.latitude
-            : null,
-          deliveryLongitude: deliveryMode === 'istmiya_dynamic'
-            ? deliveryLocation.longitude
-            : null,
+          deliveryLatitude: deliveryLocation.latitude,
+          deliveryLongitude: deliveryLocation.longitude,
         });
         if (active) setDeliveryQuote(quote);
       } catch (error) {
@@ -180,8 +208,16 @@ const CartScreen = ({ navigation }) => {
       );
       return;
     }
-    if (deliveryMode === 'istmiya_dynamic' && !deliveryLocation) {
-      Alert.alert('Ubicación necesaria', 'Comparte tu ubicación para calcular el domicilio.');
+    if (!deliveryLocation) {
+      Alert.alert('Ubicación necesaria', 'Comparte tu ubicación GPS para coordinar la entrega.');
+      return;
+    }
+    if (!deliveryAddress.trim()) {
+      Alert.alert('Dirección necesaria', 'Escribe la dirección o las indicaciones suficientes para llegar a tu domicilio.');
+      return;
+    }
+    if (hasSavedAddress && !addressChoice) {
+      Alert.alert('Confirma la dirección', 'Confirma si deseas usar la dirección habitual o edítala antes de continuar.');
       return;
     }
     setLoading(true);
@@ -190,12 +226,10 @@ const CartScreen = ({ navigation }) => {
       const orderId = pendingOrderId || await createOrder({
         businessId,
         items,
-        deliveryLatitude: deliveryMode === 'istmiya_dynamic'
-          ? deliveryLocation.latitude
-          : null,
-        deliveryLongitude: deliveryMode === 'istmiya_dynamic'
-          ? deliveryLocation.longitude
-          : null,
+        deliveryLatitude: deliveryLocation.latitude,
+        deliveryLongitude: deliveryLocation.longitude,
+        deliveryAddress: deliveryAddress.trim(),
+        deliveryInstructions: deliveryInstructions.trim() || null,
       });
       setPendingOrderId(orderId);
       watchPayment(orderId);
@@ -219,7 +253,7 @@ const CartScreen = ({ navigation }) => {
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') {
-        throw new Error('Debes permitir la ubicación para calcular el domicilio dinámico.');
+        throw new Error('Debes permitir la ubicación para coordinar la entrega.');
       }
       const position = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
@@ -248,18 +282,21 @@ const CartScreen = ({ navigation }) => {
       
       <FlatList 
         data={items} 
-        keyExtractor={(item) => item.id} 
+        keyExtractor={(item) => item.cartKey || `${item.id}:`}
         renderItem={({ item }) => (
           <View style={[styles.itemCard, { backgroundColor: colors.surface }]}>
             <View style={{ flex: 1 }}>
               <Text style={[styles.itemName, { color: colors.text }]}>{item.name}</Text>
+              {item.optionNames?.length ? (
+                <Text style={[styles.itemOptions, { color: colors.muted }]}>{item.optionNames.join(' · ')}</Text>
+              ) : null}
               <Text style={styles.itemPrice}>${item.price}</Text>
             </View>
             <View style={styles.quantityControls}>
               <AnimatedButton
                 title="-"
                 accessibilityLabel={`Disminuir cantidad de ${item.name}`}
-                onPress={() => updateQuantity(item.id, -1)}
+                onPress={() => updateQuantity(item.cartKey || `${item.id}:`, -1)}
                 buttonStyle={styles.qtyBtn}
                 textStyle={styles.qtyText}
               />
@@ -267,14 +304,14 @@ const CartScreen = ({ navigation }) => {
               <AnimatedButton
                 title="+"
                 accessibilityLabel={`Aumentar cantidad de ${item.name}`}
-                onPress={() => updateQuantity(item.id, 1)}
+                onPress={() => updateQuantity(item.cartKey || `${item.id}:`, 1)}
                 buttonStyle={styles.qtyBtn}
                 textStyle={styles.qtyText}
               />
               <AnimatedButton
                 title="Quitar"
                 accessibilityLabel={`Quitar ${item.name} del carrito`}
-                onPress={() => removeItem(item.id)}
+                onPress={() => removeItem(item.cartKey || `${item.id}:`)}
                 variant="secondary"
                 style={styles.removeBtn}
                 buttonStyle={styles.removeSurface}
@@ -287,24 +324,74 @@ const CartScreen = ({ navigation }) => {
       />
 
       <View style={[styles.footer, { backgroundColor: colors.surface }]}>
-        {deliveryMode === 'istmiya_dynamic' ? (
-          <View style={styles.locationSection}>
+        <View style={styles.locationSection}>
+          <Text style={[styles.deliveryHint, { color: colors.muted }]}>
+            Escribe la dirección y las indicaciones que ayuden al repartidor a llegar a tu domicilio.
+          </Text>
+          {hasSavedAddress && !pendingOrderId ? (
+            <View style={[styles.savedAddressCard, { borderColor: colors.border }]}>
+              <Text style={[styles.savedAddressPrompt, { color: colors.text }]}>
+                ¿Deseas usar tu dirección e indicaciones habituales?
+              </Text>
+              <View style={styles.savedAddressActions}>
+                <Pressable onPress={() => setAddressChoice('saved')}>
+                  <Text style={[styles.savedAddressAction, { color: theme.primary }]}>Usar habituales</Text>
+                </Pressable>
+                <Pressable onPress={() => setAddressChoice('edit')}>
+                  <Text style={[styles.savedAddressAction, { color: theme.primary }]}>Editar</Text>
+                </Pressable>
+              </View>
+              {addressChoice ? (
+                <Text style={[styles.deliveryHint, { color: colors.muted }]}>
+                  {addressChoice === 'saved' ? 'Usaremos los datos guardados.' : 'Puedes modificar los datos para este pedido.'}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+          <TextInput
+            accessibilityLabel="Dirección de entrega"
+            value={deliveryAddress}
+            onChangeText={(value) => {
+              setDeliveryAddress(value);
+              if (hasSavedAddress) setAddressChoice('edit');
+            }}
+            editable={!pendingOrderId}
+            placeholder="Dirección para que el repartidor llegue a tu domicilio"
+            placeholderTextColor={colors.muted}
+            style={[styles.addressInput, { color: colors.text, borderColor: colors.border }]}
+            maxLength={300}
+          />
+          <TextInput
+            accessibilityLabel="Referencia e instrucciones de entrega, opcional"
+            value={deliveryInstructions}
+            onChangeText={(value) => {
+              setDeliveryInstructions(value);
+              if (hasSavedAddress) setAddressChoice('edit');
+            }}
+            editable={!pendingOrderId}
+            placeholder="Apartamento, referencia o instrucciones (opcional)"
+            placeholderTextColor={colors.muted}
+            style={[styles.addressInput, styles.instructionsInput, { color: colors.text, borderColor: colors.border }]}
+            maxLength={500}
+            multiline
+          />
+          <AnimatedButton
+            title={locationLoading
+              ? 'Obteniendo ubicación...'
+              : deliveryLocation
+                ? 'Actualizar ubicación GPS'
+                : 'Compartir ubicación GPS'}
+            onPress={requestDeliveryLocation}
+            disabled={locationLoading || deliveryLoading || Boolean(pendingOrderId)}
+            variant="secondary"
+            style={styles.locationButton}
+          />
+          {deliveryLocation ? (
             <Text style={[styles.deliveryHint, { color: colors.muted }]}>
-              Tu ubicación se usa para calcular el domicilio y coordinar esta entrega.
+              Ubicación GPS capturada correctamente.
             </Text>
-            <AnimatedButton
-              title={locationLoading
-                ? 'Obteniendo ubicación...'
-                : deliveryLocation
-                  ? 'Actualizar ubicación de entrega'
-                  : 'Usar mi ubicación para calcular el domicilio'}
-              onPress={requestDeliveryLocation}
-              disabled={locationLoading || deliveryLoading}
-              variant="secondary"
-              style={styles.locationButton}
-            />
-          </View>
-        ) : null}
+          ) : null}
+        </View>
         <View style={styles.feeRow}>
           <Text style={[styles.feeLabel, { color: colors.muted }]}>Subtotal de productos</Text>
           <Text style={[styles.feeValue, { color: colors.text }]}>{formatCOP(getTotal(), locale)}</Text>
@@ -316,8 +403,8 @@ const CartScreen = ({ navigation }) => {
               ? 'Calculando...'
               : deliveryQuote
                 ? formatCOP(deliveryFee, locale)
-                : deliveryMode === 'istmiya_dynamic'
-                  ? 'Comparte tu ubicación'
+                : !deliveryLocation
+                  ? 'Comparte tu ubicación GPS'
                   : 'Cargando tarifa...'}
           </Text>
         </View>
@@ -348,6 +435,9 @@ const CartScreen = ({ navigation }) => {
             items.length === 0
             || !deliveryQuote
             || deliveryLoading
+            || !deliveryLocation
+            || !deliveryAddress.trim()
+            || (hasSavedAddress && !addressChoice)
           ))}
           style={styles.checkoutBtn}
           buttonStyle={styles.checkoutSurface}
@@ -368,6 +458,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', elevation: 2 
   },
   itemName: { fontSize: 16, fontWeight: 'bold', color: '#333' },
+  itemOptions: { fontSize: 12, marginTop: 3 },
   itemPrice: { fontSize: 14, color: '#2E7D32', fontWeight: '600' },
   quantityControls: { flexDirection: 'row', alignItems: 'center' },
   qtyBtn: { backgroundColor: '#E0E0E0', width: 36, height: 36, minHeight: 36, padding: 0, borderRadius: 18 },
@@ -379,6 +470,19 @@ const styles = StyleSheet.create({
   footer: { backgroundColor: '#fff', padding: 20, borderRadius: 20, elevation: 5, marginTop: 20 },
   locationSection: { marginBottom: 12 },
   deliveryHint: { fontSize: 12, lineHeight: 18, marginBottom: 8 },
+  addressInput: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  instructionsInput: { minHeight: 54, textAlignVertical: 'top' },
+  savedAddressCard: { borderWidth: 1, borderRadius: 10, padding: 10, marginBottom: 8 },
+  savedAddressPrompt: { fontSize: 13, fontWeight: '700' },
+  savedAddressActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
+  savedAddressAction: { paddingVertical: 6, paddingRight: 12, fontWeight: '700' },
   locationButton: { alignSelf: 'stretch' },
   feeRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
   feeLabel: { fontSize: 14 },

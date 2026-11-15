@@ -42,7 +42,9 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "build:web": "expo export --platform web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "test": "node --test ./tests/*.test.mjs",
+    "test:financial": "node ./tests/run-financial-integration.mjs"
   },
   "private": true
 }
