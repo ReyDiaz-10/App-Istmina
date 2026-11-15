@@ -91,9 +91,11 @@ La suite local no simula la firma ni la entrega real de eventos de Wompi. Las pr
 
 Cada `git push` a `main` inicia un build Android de perfil `preview` en EAS. El APK queda disponible en el enlace del build de Expo; también se puede iniciar manualmente desde GitHub Actions con `workflow_dispatch`. El perfil incrementa automáticamente el `versionCode` remoto.
 
+La configuración canónica de Expo/EAS está en `app/app.json` y `app/eas.json`; ejecuta los comandos de EAS desde `app/`. No uses archivos `app.json` o `eas.json` en la raíz.
+
 Antes del primer build automático:
 
-1. Crea un token en Expo y guárdalo en GitHub como secreto de Actions llamado `EXPO_TOKEN` (Settings → Secrets and variables → Actions). No lo agregues al repositorio.
+1. Crea un token en la cuenta Expo que tenga acceso al proyecto IstmiYa y guárdalo en GitHub como secreto de Actions llamado `EXPO_TOKEN` (Settings → Secrets and variables → Actions). No lo agregues al repositorio.
 2. Verifica que `EXPO_PUBLIC_SUPABASE_URL` y `EXPO_PUBLIC_SUPABASE_ANON_KEY` estén definidas en el entorno `preview` de EAS; actualmente ambas aparecen configuradas.
 3. Desde `app/`, consulta el contador remoto con `eas build:version:get --platform android --profile preview`. Actualmente es `2`; `autoIncrement` lo aumentará en el siguiente build.
 4. Confirma y sube a `main` el workflow `.github/workflows/eas-android-apk.yml` y la configuración `app/eas.json`.

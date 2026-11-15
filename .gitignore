@@ -4,3 +4,5 @@ node_modules/
 .expo/
 .vercel
 .env*
+/app.json
+/eas.json
