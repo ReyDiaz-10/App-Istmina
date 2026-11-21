@@ -48,7 +48,12 @@ serve(async (request) => {
     const body = await request.json();
     if (
       typeof body.orderId !== "string" ||
-      (body.action !== "client_cancel" && body.action !== "business_reject")
+      (
+        body.action !== "client_cancel" &&
+        body.action !== "business_reject" &&
+        body.action !== "business_stock_out" &&
+        body.action !== "business_delivery_failed"
+      )
     ) {
       return jsonResponse({ error: "A valid orderId and action are required" }, 400);
     }

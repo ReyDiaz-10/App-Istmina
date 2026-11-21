@@ -6,6 +6,15 @@ ALTER TABLE public.profiles
 ALTER TYPE public.user_role RENAME TO user_role_legacy;
 CREATE TYPE public.user_role AS ENUM ('cliente', 'negocio', 'repartidor', 'admin');
 
+DROP POLICY IF EXISTS businesses_insert_owner ON public.businesses;
+DROP POLICY IF EXISTS profiles_insert_self ON public.profiles;
+DROP POLICY IF EXISTS order_payment_attempts_admin_read ON public.order_payment_attempts;
+DROP POLICY IF EXISTS order_refunds_select_order_participants ON public.order_refunds;
+DROP POLICY IF EXISTS business_payouts_owner_or_admin_read ON public.business_payouts;
+DROP POLICY IF EXISTS business_settlement_items_owner_or_admin_read ON public.business_settlement_items;
+DROP TRIGGER IF EXISTS prevent_client_superadmin_assignment ON public.profiles;
+DROP TRIGGER IF EXISTS prevent_client_super_admin_assignment ON public.profiles;
+
 ALTER TABLE public.profiles
   ALTER COLUMN role TYPE public.user_role
   USING (
@@ -146,6 +155,61 @@ BEGIN
 END;
 $$;
 
+CREATE POLICY profiles_insert_self
+  ON public.profiles FOR INSERT TO authenticated
+  WITH CHECK (id = auth.uid() AND role::TEXT <> 'admin');
+
+CREATE POLICY businesses_insert_owner
+  ON public.businesses FOR INSERT TO authenticated
+  WITH CHECK (
+    profile_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM public.profiles p
+      WHERE p.id = auth.uid() AND p.role::TEXT = 'negocio'
+    )
+  );
+
+CREATE POLICY order_payment_attempts_admin_read
+  ON public.order_payment_attempts FOR SELECT TO authenticated
+  USING (public.is_admin());
+
+CREATE POLICY order_refunds_select_order_participants
+  ON public.order_refunds FOR SELECT TO authenticated
+  USING (
+    public.is_admin()
+    OR EXISTS (
+      SELECT 1 FROM public.orders o
+      WHERE o.id = order_refunds.order_id
+        AND (
+          o.client_id = auth.uid()
+          OR EXISTS (
+            SELECT 1 FROM public.businesses b
+            WHERE b.id = o.business_id AND b.profile_id = auth.uid()
+          )
+        )
+    )
+  );
+
+CREATE POLICY business_payouts_owner_or_admin_read
+  ON public.business_payouts FOR SELECT TO authenticated
+  USING (
+    public.is_admin()
+    OR EXISTS (
+      SELECT 1 FROM public.businesses b
+      WHERE b.id = business_id AND b.profile_id = auth.uid()
+    )
+  );
+
+CREATE POLICY business_settlement_items_owner_or_admin_read
+  ON public.business_settlement_items FOR SELECT TO authenticated
+  USING (
+    public.is_admin()
+    OR EXISTS (
+      SELECT 1 FROM public.businesses b
+      WHERE b.id = business_id AND b.profile_id = auth.uid()
+    )
+  );
+
 CREATE OR REPLACE FUNCTION public.admin_review_financial_exception(
   p_exception_type TEXT,
   p_exception_id TEXT,
@@ -195,9 +259,7 @@ GRANT EXECUTE ON FUNCTION public.admin_review_financial_exception(TEXT, TEXT, TE
 DROP FUNCTION IF EXISTS public.is_superadmin();
 DROP FUNCTION IF EXISTS public.is_super_admin();
 
-DROP TRIGGER IF EXISTS prevent_client_superadmin_assignment ON public.profiles;
 DROP FUNCTION IF EXISTS public.prevent_client_superadmin_assignment();
-DROP TRIGGER IF EXISTS prevent_client_super_admin_assignment ON public.profiles;
 DROP FUNCTION IF EXISTS public.prevent_client_super_admin_assignment();
 
 CREATE OR REPLACE FUNCTION public.prevent_client_admin_assignment()

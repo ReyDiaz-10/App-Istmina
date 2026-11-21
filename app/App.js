@@ -13,10 +13,13 @@ import ClientHomeScreen from './src/screens/client/ClientHomeScreen';
 import StoreDetailScreen from './src/screens/client/StoreDetailScreen';
 import CartScreen from './src/screens/client/CartScreen';
 import ClientOrdersScreen from './src/screens/client/ClientOrdersScreen';
+import ClientOrderFeedbackScreen from './src/screens/client/ClientOrderFeedbackScreen';
 import OrderChatScreen from './src/screens/client/OrderChatScreen';
 import OrderCallScreen from './src/screens/calls/OrderCallScreen';
 import BusinessTabs from './src/navigation/BusinessTabs';
 import DriverHomeScreen from './src/screens/driver/DriverHomeScreen';
+import DriverOrderClosureFeedbackScreen from './src/screens/driver/DriverOrderClosureFeedbackScreen';
+import DriverFeedbackScreen from './src/screens/driver/DriverFeedbackScreen';
 import DriverProfileScreen from './src/screens/driver/DriverProfileScreen';
 import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
 import AdminFinanceScreen from './src/screens/admin/AdminFinanceScreen';
@@ -27,6 +30,7 @@ import AboutScreen from './src/screens/client/AboutScreen';
 import PrivacyScreen from './src/screens/client/PrivacyScreen';
 import AppSettingsScreen from './src/screens/client/AppSettingsScreen';
 import ClientProfileScreen from './src/screens/client/ClientProfileScreen';
+import BusinessWalletTransfersScreen from './src/screens/business/BusinessWalletTransfersScreen';
 
 import { useAuthStore } from './src/store/authStore';
 import { supabase, supabaseConfigError } from './src/api/supabaseClient';
@@ -130,10 +134,14 @@ export default function App() {
           <Stack.Screen name="StoreDetail" component={StoreDetailScreen} />
           <Stack.Screen name="Cart" component={CartScreen} />
           <Stack.Screen name="ClientOrders" component={ClientOrdersScreen} />
+          <Stack.Screen name="ClientOrderFeedback" component={ClientOrderFeedbackScreen} />
           <Stack.Screen name="OrderChat" component={OrderChatScreen} />
           <Stack.Screen name="OrderCall" component={OrderCallScreen} />
           <Stack.Screen name="BusinessHome" component={BusinessTabs} />
+          <Stack.Screen name="BusinessWalletTransfers" component={BusinessWalletTransfersScreen} />
           <Stack.Screen name="DriverHome" component={DriverHomeScreen} />
+          <Stack.Screen name="DriverOrderClosureFeedback" component={DriverOrderClosureFeedbackScreen} />
+          <Stack.Screen name="DriverFeedback" component={DriverFeedbackScreen} />
           <Stack.Screen name="DriverProfile" component={DriverProfileScreen} />
           <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
           <Stack.Screen name="AdminFinance" component={AdminFinanceScreen} />

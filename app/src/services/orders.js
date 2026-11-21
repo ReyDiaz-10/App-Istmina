@@ -1,5 +1,15 @@
 import { supabase } from '../api/supabaseClient';
 
+export function createIdempotencyKey() {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
+    const value = Math.floor(Math.random() * 16);
+    return (character === 'x' ? value : (value & 0x3) | 0x8).toString(16);
+  });
+}
+
 export async function quoteDeliveryFee({
   businessId,
   deliveryLatitude = null,
@@ -52,6 +62,21 @@ export async function createOrder({
   if (typeof data !== 'string') {
     throw new Error('Supabase did not return the new order ID.');
   }
+  return data;
+}
+
+export async function createPickupOrder({ businessId, items, idempotencyKey }) {
+  const { data, error } = await supabase.rpc('create_pickup_order', {
+    p_business_id: businessId,
+    p_items: items.map(({ id, quantity, optionIds = [] }) => ({
+      product_id: id,
+      quantity,
+      option_ids: optionIds,
+    })),
+    p_idempotency_key: idempotencyKey,
+  });
+  if (error) throw error;
+  if (typeof data !== 'string') throw new Error('Supabase did not return the pickup order ID.');
   return data;
 }
 

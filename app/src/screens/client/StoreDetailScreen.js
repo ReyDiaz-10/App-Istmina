@@ -7,7 +7,6 @@ import {
   Modal,
   Pressable,
   StyleSheet,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
@@ -22,9 +21,10 @@ import { formatCOP } from '../../utils/formatters';
 const StoreDetailScreen = ({ route, navigation }) => {
   const { businessId: selectedBusinessId, storeName } = route.params || {};
   const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(Boolean(selectedBusinessId));
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [selectedOptions, setSelectedOptions] = useState([]);
+  const [requestedProducts, setRequestedProducts] = useState({});
   const user = useAuthStore((state) => state.user);
   const addItem = useCartStore((state) => state.addItem);
   const theme = useRoleTheme();
@@ -33,37 +33,69 @@ const StoreDetailScreen = ({ route, navigation }) => {
 
   useEffect(() => {
     let active = true;
-
     const fetchProducts = async () => {
-      if (!selectedBusinessId) {
-        setProducts([]);
-        setLoading(false);
-        return;
-      }
-
+      if (!selectedBusinessId) return;
       try {
         const { data, error } = await supabase
           .from('products')
           .select('*, product_options(*)')
           .eq('business_id', selectedBusinessId);
-
         if (error) throw error;
-        if (active) setProducts((data || []).filter((product) => (
-          product.is_available !== false
-          && (!product.inventory_enabled || Number(product.stock_quantity) > 0)
-        )));
+        if (active) setProducts(data || []);
       } catch (error) {
         console.error('Error cargando productos:', error.message);
       } finally {
         if (active) setLoading(false);
       }
     };
-
     fetchProducts();
+    if (!selectedBusinessId) return () => { active = false; };
+    const channel = supabase
+      .channel(`store-products:${selectedBusinessId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'products', filter: `business_id=eq.${selectedBusinessId}` },
+        fetchProducts,
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`Realtime product subscription failed: ${status}`);
+        }
+      });
     return () => {
       active = false;
+      supabase.removeChannel(channel);
     };
   }, [selectedBusinessId]);
+
+  const isProductAvailable = (product) => (
+    product.is_available !== false
+    && (!product.inventory_enabled
+      || Number(product.stock_quantity) - Number(product.reserved_quantity || 0) > 0)
+  );
+
+  const requestAvailability = async (product) => {
+    if (!user) {
+      navigation.navigate('Login', {
+        returnTo: 'StoreDetail',
+        returnParams: { businessId: selectedBusinessId, storeName },
+      });
+      return;
+    }
+    try {
+      const { error } = await supabase.rpc('request_product_availability', {
+        p_product_id: product.id,
+      });
+      if (error) throw error;
+      setRequestedProducts((current) => ({ ...current, [product.id]: true }));
+      Alert.alert(
+        'Solicitud enviada',
+        'El negocio recibió tu solicitud para revisar y actualizar la disponibilidad. No se abrió un chat.',
+      );
+    } catch (error) {
+      Alert.alert('No se pudo enviar la solicitud', error.message);
+    }
+  };
 
   const handleAddToCart = (item, optionIds = []) => {
     if (!user) {
@@ -122,25 +154,43 @@ const StoreDetailScreen = ({ route, navigation }) => {
   };
 
   const renderProduct = ({ item }) => {
-    const availableOptions = (item.product_options || []).filter((option) => option.is_available);
+    const available = isProductAvailable(item);
     return (
       <View style={[styles.productCard, { backgroundColor: colors.surface }]}>
         <View style={styles.productInfo}>
           <Text style={[styles.productName, { color: colors.text }]}>{item.name}</Text>
           <Text style={[styles.productDesc, { color: colors.muted }]}>{item.description}</Text>
           {item.inventory_enabled ? (
-            <Text style={[styles.productDesc, { color: colors.muted }]}>Disponibles: {item.stock_quantity}</Text>
+            <Text style={[styles.productDesc, { color: colors.muted }]}>
+              Disponibles: {Math.max(0, Number(item.stock_quantity || 0) - Number(item.reserved_quantity || 0))}
+            </Text>
           ) : null}
+          <Text style={[styles.productDesc, { color: available ? colors.primary : '#B3261E', fontWeight: '700' }]}>
+            {available ? 'Disponible' : 'Agotado'}
+          </Text>
           <Text style={[styles.productPrice, { color: theme.primary }]}>{formatCOP(item.price, locale)}</Text>
         </View>
-        <AnimatedButton
-          title="+"
-          accessibilityLabel={`Agregar ${item.name} al carrito`}
-          onPress={() => chooseProductOptions(item)}
-          style={styles.addButton}
-          buttonStyle={styles.addButtonSurface}
-          textStyle={styles.addButtonText}
-        />
+        {available ? (
+          <AnimatedButton
+            title="+"
+            accessibilityLabel={`Agregar ${item.name} al carrito`}
+            onPress={() => chooseProductOptions(item)}
+            style={styles.addButton}
+            buttonStyle={styles.addButtonSurface}
+            textStyle={styles.addButtonText}
+          />
+        ) : (
+          <View style={styles.unavailableActions}>
+            <Text style={[styles.productDesc, { color: colors.muted }]}>Temporalmente no disponible</Text>
+            <AnimatedButton
+              title={requestedProducts[item.id] ? 'Solicitud enviada' : 'Solicitar actualización'}
+              accessibilityLabel={`Solicitar al negocio actualizar la disponibilidad de ${item.name}`}
+              onPress={() => requestAvailability(item)}
+              disabled={Boolean(requestedProducts[item.id])}
+              variant="secondary"
+            />
+          </View>
+        )}
       </View>
     );
   };
@@ -164,7 +214,7 @@ const StoreDetailScreen = ({ route, navigation }) => {
             renderItem={renderProduct}
             contentContainerStyle={styles.listContent}
             ListEmptyComponent={
-              <Text style={styles.emptyText}>Este negocio aún no tiene productos disponibles.</Text>
+              <Text style={styles.emptyText}>Este negocio aún no tiene productos en su catálogo.</Text>
             }
           />
           <Modal
@@ -269,6 +319,7 @@ const styles = StyleSheet.create({
   productDesc: { fontSize: 14, color: '#757575', marginVertical: 4 },
   productPrice: { fontSize: 16, fontWeight: 'bold' },
   addButton: { alignSelf: 'center' },
+  unavailableActions: { alignItems: 'flex-end', gap: 6 },
   addButtonSurface: { width: 42, height: 42, minHeight: 42, borderRadius: 21, padding: 0 },
   addButtonText: { fontSize: 22, lineHeight: 24 },
   emptyText: { textAlign: 'center', marginTop: 50, color: '#757575', fontSize: 16 },

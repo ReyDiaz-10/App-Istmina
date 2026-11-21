@@ -1,6 +1,6 @@
 import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/business/BusinessHomeScreen.js
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -10,6 +10,7 @@ import {
   Modal,
   ScrollView,
   StyleSheet,
+  Switch,
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -26,6 +27,7 @@ import HelpButton from '../../components/HelpButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { formatCOP } from '../../utils/formatters';
+import { isValidOperatingTime, isOperatingRangeValid } from '../../utils/operatingHours';
 
 const Metric = ({ label, value, colors }) => (
   <View style={[styles.metric, { backgroundColor: colors.background }]}>
@@ -53,6 +55,18 @@ const BusinessHomeScreen = ({ navigation }) => {
   const [savingVerification, setSavingVerification] = useState(false);
   const [verificationFeedback, setVerificationFeedback] = useState(null);
   const [photoFeedback, setPhotoFeedback] = useState(null);
+  const [operatingHours, setOperatingHours] = useState([
+    { day_of_week: 0, opens_at: '08:00', closes_at: '21:00', is_open: true, name: 'Domingo' },
+    { day_of_week: 1, opens_at: '08:00', closes_at: '21:00', is_open: true, name: 'Lunes' },
+    { day_of_week: 2, opens_at: '08:00', closes_at: '21:00', is_open: true, name: 'Martes' },
+    { day_of_week: 3, opens_at: '08:00', closes_at: '21:00', is_open: true, name: 'Miércoles' },
+    { day_of_week: 4, opens_at: '08:00', closes_at: '21:00', is_open: true, name: 'Jueves' },
+    { day_of_week: 5, opens_at: '08:00', closes_at: '21:00', is_open: true, name: 'Viernes' },
+    { day_of_week: 6, opens_at: '08:00', closes_at: '21:00', is_open: true, name: 'Sábado' },
+  ]);
+  const [savingOperatingHours, setSavingOperatingHours] = useState(false);
+  const [operatingHoursFeedback, setOperatingHoursFeedback] = useState(null);
+  const [savingPickupSettings, setSavingPickupSettings] = useState(false);
 
   // Estados de Interfaz (UI)
   const [modalVisible, setModalVisible] = useState(false);
@@ -62,10 +76,6 @@ const BusinessHomeScreen = ({ navigation }) => {
     price: '',
     category: '',
   });
-
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
 
   useEffect(() => {
     if (!business?.id) return undefined;
@@ -102,7 +112,8 @@ const BusinessHomeScreen = ({ navigation }) => {
 
   // --- LÓGICA DE DATOS ---
 
-  const loadDashboardData = async () => {
+  const loadDashboardData = useCallback(async () => {
+    if (!profile?.id) return;
     setLoading(true);
     try {
       // 1. Obtener datos del negocio
@@ -116,7 +127,7 @@ const BusinessHomeScreen = ({ navigation }) => {
       setBusiness(businessData);
 
       // 2. Carga concurrente de Billetera, Suscripción y Productos
-      const [walletRes, subRes, prodRes, verificationRes, metricsRes] = await Promise.all([
+      const [walletRes, subRes, prodRes, verificationRes, metricsRes, hoursRes] = await Promise.all([
         supabase.from('wallets').select('*').eq('business_id', businessData.id).single(),
         supabase.from('subscriptions').select('*').eq('business_id', businessData.id).maybeSingle(),
         supabase.from('products').select('*').eq('business_id', businessData.id),
@@ -125,12 +136,16 @@ const BusinessHomeScreen = ({ navigation }) => {
           .eq('business_id', businessData.id)
           .single(),
         supabase.rpc('business_dashboard_summary'),
+        supabase.from('business_operating_hours')
+          .select('day_of_week, opens_at, closes_at, is_confirmed')
+          .eq('business_id', businessData.id),
       ]);
 
       if (walletRes.error) throw walletRes.error;
       if (prodRes.error) throw prodRes.error;
       if (verificationRes.error) throw verificationRes.error;
       if (metricsRes.error) throw metricsRes.error;
+      if (hoursRes.error) throw hoursRes.error;
 
       setWallet({ balance: walletRes.data?.balance || 0 });
       setVerificationStatus(verificationRes.data.verification_status);
@@ -145,13 +160,31 @@ const BusinessHomeScreen = ({ navigation }) => {
         ),
       });
       setProducts(prodRes.data || []);
+      if (hoursRes.data?.length) {
+        const names = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+        setOperatingHours(names.map((name, day_of_week) => {
+          const saved = hoursRes.data.find((row) => Number(row.day_of_week) === day_of_week);
+          return {
+            day_of_week,
+            name,
+            is_open: Boolean(saved),
+            opens_at: saved?.opens_at?.slice(0, 5) || '08:00',
+            closes_at: saved?.closes_at?.slice(0, 5) || '21:00',
+          };
+        }));
+      }
 
     } catch (error) {
       Alert.alert('Error de Carga', error.message);
     } finally {
       setLoading(false);
     }
-  };
+  }, [profile]);
+
+  useEffect(() => {
+    const initialLoad = setTimeout(() => { void loadDashboardData(); }, 0);
+    return () => clearTimeout(initialLoad);
+  }, [loadDashboardData]);
 
   const updateBusinessStatus = async (newStatus) => {
     if (newStatus === 'activo' && verificationStatus !== 'aprobado') {
@@ -235,6 +268,57 @@ const BusinessHomeScreen = ({ navigation }) => {
       setPhotoFeedback({ type: 'error', text: `No se pudo guardar la foto: ${error.message}` });
     } finally {
       setUploadingBusinessPhoto(false);
+    }
+  };
+
+  const saveOperatingHours = async () => {
+    setOperatingHoursFeedback(null);
+    setSavingOperatingHours(true);
+    try {
+      const openDays = operatingHours.filter((row) => row.is_open);
+      if (!openDays.length) {
+        throw new Error('Selecciona al menos un día de atención.');
+      }
+      for (const row of openDays) {
+        if (!isValidOperatingTime(row.opens_at) || !isValidOperatingTime(row.closes_at)) {
+          throw new Error(`Horario inválido en ${row.name}. Usa el formato 24 horas HH:mm.`);
+        }
+        if (!isOperatingRangeValid(row.opens_at, row.closes_at)) {
+          throw new Error(`En ${row.name}, la hora de cierre debe ser posterior a la apertura.`);
+        }
+      }
+      const { error } = await supabase.rpc('save_business_operating_hours', {
+        p_hours: openDays.map(({ day_of_week, opens_at, closes_at }) => ({
+          day_of_week,
+          opens_at,
+          closes_at,
+        })),
+        p_timezone: 'America/Bogota',
+      });
+      if (error) throw error;
+      setOperatingHoursFeedback({
+        type: 'success',
+        text: 'Horario operativo confirmado; los días cerrados no recibirán pedidos.',
+      });
+    } catch (error) {
+      setOperatingHoursFeedback({ type: 'error', text: error.message });
+    } finally {
+      setSavingOperatingHours(false);
+    }
+  };
+
+  const updatePickupEnabled = async (enabled) => {
+    setSavingPickupSettings(true);
+    try {
+      const { error } = await supabase.rpc('set_business_pickup_enabled', {
+        p_enabled: enabled,
+      });
+      if (error) throw error;
+      setBusiness((current) => ({ ...current, pickup_enabled: enabled }));
+    } catch (error) {
+      Alert.alert('No se pudo actualizar el retiro en tienda', error.message);
+    } finally {
+      setSavingPickupSettings(false);
     }
   };
 
@@ -441,6 +525,7 @@ const BusinessHomeScreen = ({ navigation }) => {
           loading={paymentLoading}
           onTopUp={() => handleBusinessPayment('wallet')}
           onSubscribe={() => handleBusinessPayment('subscription')}
+          onTransferBalance={() => navigation.navigate('BusinessWalletTransfers')}
         />
         <BannerUploader
           businessId={business.id}
@@ -451,6 +536,86 @@ const BusinessHomeScreen = ({ navigation }) => {
           business={business}
           onSaved={(updatedBusiness) => setBusiness((current) => ({ ...current, ...updatedBusiness }))}
         />
+
+        <View style={styles.operatingCard}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Retiro en tienda</Text>
+          <Text style={[styles.verificationText, { color: colors.muted }]}>
+            Cuando está habilitado, los clientes pueden pagar pedidos y reclamarlos en el local con un código. No se asignará repartidor.
+          </Text>
+          <AnimatedButton
+            title={savingPickupSettings
+              ? 'Guardando...'
+              : business.pickup_enabled ? 'Deshabilitar retiro en tienda' : 'Habilitar retiro en tienda'}
+            onPress={() => updatePickupEnabled(!business.pickup_enabled)}
+            disabled={savingPickupSettings}
+            variant={business.pickup_enabled ? 'secondary' : 'primary'}
+          />
+        </View>
+
+        <View style={styles.operatingCard}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Horario operativo</Text>
+          <Text style={[styles.verificationText, { color: colors.muted }]}>
+            Configura los días y horarios de atención. Los días desactivados permanecerán cerrados. Se usa la zona horaria de Colombia (America/Bogota).
+          </Text>
+          {operatingHours.map((row, index) => (
+            <View key={row.day_of_week} style={styles.operatingDayGroup}>
+              <View style={styles.operatingDayRow}>
+                <Text style={[styles.operatingDay, { color: colors.text }]}>{row.name}</Text>
+                <Switch
+                  accessibilityLabel={`Atiende el ${row.name}`}
+                  value={row.is_open}
+                  onValueChange={(is_open) => setOperatingHours((current) => current.map((item, itemIndex) =>
+                    itemIndex === index ? { ...item, is_open } : item))}
+                />
+                <Text style={[styles.operatingDayStatus, { color: colors.muted }]}>
+                  {row.is_open ? 'Abierto' : 'Cerrado'}
+                </Text>
+              </View>
+              {row.is_open ? (
+                <View style={styles.operatingTimeRow}>
+                  <TextInput
+                    accessibilityLabel={`Hora de apertura del ${row.name}`}
+                    value={row.opens_at}
+                    onChangeText={(opens_at) => setOperatingHours((current) => current.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, opens_at } : item))}
+                    placeholder="08:00"
+                    placeholderTextColor={colors.muted}
+                    style={[styles.operatingInput, { color: colors.text, borderColor: colors.border }]}
+                    maxLength={5}
+                  />
+                  <Text style={[styles.operatingSeparator, { color: colors.muted }]}>a</Text>
+                  <TextInput
+                    accessibilityLabel={`Hora de cierre del ${row.name}`}
+                    value={row.closes_at}
+                    onChangeText={(closes_at) => setOperatingHours((current) => current.map((item, itemIndex) =>
+                      itemIndex === index ? { ...item, closes_at } : item))}
+                    placeholder="21:00"
+                    placeholderTextColor={colors.muted}
+                    style={[styles.operatingInput, { color: colors.text, borderColor: colors.border }]}
+                    maxLength={5}
+                  />
+                </View>
+              ) : null}
+            </View>
+          ))}
+          <AnimatedButton
+            title={savingOperatingHours ? 'Guardando horario...' : 'Confirmar horario operativo'}
+            onPress={saveOperatingHours}
+            disabled={savingOperatingHours}
+            style={styles.photoButton}
+          />
+          {operatingHoursFeedback ? (
+            <Text
+              accessibilityRole="alert"
+              style={[
+                styles.actionFeedback,
+                { color: operatingHoursFeedback.type === 'success' ? colors.primary : '#B3261E' },
+              ]}
+            >
+              {operatingHoursFeedback.text}
+            </Text>
+          ) : null}
+        </View>
 
         {/* ESTADO OPERACIONAL */}
         <View style={styles.statusContainer}>
@@ -574,6 +739,28 @@ const styles = StyleSheet.create({
   verificationInput: { borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8 },
   identificationTypeRow: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   identificationType: { flex: 1, alignSelf: 'stretch' },
+
+  operatingCard: {
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    marginBottom: 20,
+  },
+  operatingDayGroup: { marginBottom: 8 },
+  operatingDayRow: { flexDirection: 'row', alignItems: 'center' },
+  operatingDay: { flex: 1, fontSize: 13, fontWeight: '700' },
+  operatingDayStatus: { width: 62, fontSize: 12, textAlign: 'right' },
+  operatingTimeRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  operatingInput: {
+    width: 72,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    textAlign: 'center',
+  },
+  operatingSeparator: { marginHorizontal: 8, fontSize: 13 },
 
   // Status Section
   statusContainer: { marginBottom: 25 },

@@ -41,7 +41,9 @@ export default function BusinessCatalogScreen() {
   const profile = useAuthStore((state) => state.profile);
   const [businessId, setBusinessId] = useState(null);
   const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [productMetrics, setProductMetrics] = useState({});
+  const [availabilityRequests, setAvailabilityRequests] = useState([]);
+  const [loading, setLoading] = useState(Boolean(profile?.id));
   const [saving, setSaving] = useState(false);
   const [productModal, setProductModal] = useState(false);
   const [optionModal, setOptionModal] = useState(false);
@@ -53,14 +55,30 @@ export default function BusinessCatalogScreen() {
 
   const loadProducts = useCallback(async (id) => {
     if (!id) return;
-    const { data, error } = await supabase
-      .from('products')
-      .select('*, product_options(*)')
-      .eq('business_id', id)
-      .order('name');
-    if (error) throw error;
-    setProducts(data || []);
-  }, [businessId]);
+    const [productsResult, metricsResult, requestsResult] = await Promise.all([
+      supabase
+        .from('products')
+        .select('*, product_options(*)')
+        .eq('business_id', id)
+        .order('name'),
+      supabase.rpc('business_product_order_metrics', { p_business_id: id }),
+      supabase
+        .from('product_availability_requests')
+        .select('id, product_id, requester_id, created_at, products(name)')
+        .eq('business_id', id)
+        .eq('status', 'open')
+        .order('created_at', { ascending: false }),
+    ]);
+    if (productsResult.error) throw productsResult.error;
+    if (metricsResult.error) throw metricsResult.error;
+    if (requestsResult.error) throw requestsResult.error;
+    setProducts(productsResult.data || []);
+    setProductMetrics(Object.fromEntries((metricsResult.data || []).map((metric) => [
+      metric.product_id,
+      { orderCount: Number(metric.order_count || 0), requestedUnits: Number(metric.requested_units || 0) },
+    ])));
+    setAvailabilityRequests(requestsResult.data || []);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -83,9 +101,30 @@ export default function BusinessCatalogScreen() {
       }
     };
     if (profile?.id) load();
-    else setLoading(false);
     return () => { active = false; };
   }, [profile?.id, loadProducts]);
+
+  useEffect(() => {
+    if (!businessId) return undefined;
+    const channel = supabase
+      .channel(`business-catalog:${businessId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'product_availability_requests', filter: `business_id=eq.${businessId}` },
+        () => loadProducts(businessId),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'products', filter: `business_id=eq.${businessId}` },
+        () => loadProducts(businessId),
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`Realtime business catalog subscription failed: ${status}`);
+        }
+      });
+    return () => supabase.removeChannel(channel);
+  }, [businessId, loadProducts]);
 
   const openNewProduct = () => {
     setEditingProduct(null);
@@ -127,13 +166,27 @@ export default function BusinessCatalogScreen() {
         price,
         inventory_enabled: productForm.inventory_enabled,
         stock_quantity: productForm.inventory_enabled ? stock : null,
-        is_available: productForm.is_available,
+        is_available: editingProduct ? editingProduct.is_available : productForm.is_available,
       };
       const query = editingProduct
         ? supabase.from('products').update(values).eq('id', editingProduct.id).eq('business_id', businessId)
         : supabase.from('products').insert({ ...values, business_id: businessId });
       const { error } = await query;
       if (error) throw error;
+      const availableStock = Number(productForm.stock_quantity || 0)
+        - Number(editingProduct?.reserved_quantity || 0);
+      if (editingProduct && (
+        productForm.is_available !== editingProduct.is_available
+        || !productForm.is_available
+        || !editingProduct.inventory_enabled
+        || availableStock > 0
+      )) {
+        const { error: availabilityError } = await supabase.rpc('set_product_availability', {
+          p_product_id: editingProduct.id,
+          p_is_available: productForm.is_available,
+        });
+        if (availabilityError) throw availabilityError;
+      }
       await loadProducts(businessId);
       setProductModal(false);
     } catch (error) {
@@ -141,6 +194,28 @@ export default function BusinessCatalogScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const toggleProductAvailability = async (product, isAvailable) => {
+    try {
+      const { error } = await supabase.rpc('set_product_availability', {
+        p_product_id: product.id,
+        p_is_available: isAvailable,
+      });
+      if (error) throw error;
+      await loadProducts(businessId);
+    } catch (error) {
+      Alert.alert('No se pudo actualizar la disponibilidad', error.message);
+    }
+  };
+
+  const editRequestedProduct = (productId) => {
+    const product = products.find((item) => item.id === productId);
+    if (!product) {
+      Alert.alert('Producto no disponible', 'Recarga el catálogo para encontrar el producto solicitado.');
+      return;
+    }
+    openEditProduct(product);
   };
 
   const deleteProduct = (product) => {
@@ -233,6 +308,17 @@ export default function BusinessCatalogScreen() {
   };
 
   const styles = createStyles();
+  const groupedAvailabilityRequests = availabilityRequests.reduce((groups, request) => {
+    const current = groups[request.product_id] || {
+      productId: request.product_id,
+      productName: request.products?.name || 'Producto',
+      count: 0,
+      createdAt: request.created_at,
+    };
+    current.count += 1;
+    groups[request.product_id] = current;
+    return groups;
+  }, {});
 
   if (loading) {
     return <View style={[styles.center, { backgroundColor: colors.background }]}>
@@ -246,12 +332,36 @@ export default function BusinessCatalogScreen() {
         <Text style={[styles.title, { color: colors.text }]}>Catálogo de productos</Text>
         <AnimatedButton title="Agregar" onPress={openNewProduct} />
       </View>
+      {Object.keys(groupedAvailabilityRequests).length > 0 ? (
+        <View style={[styles.requestsCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <Text style={[styles.optionsTitle, { color: colors.text }]}>
+            Solicitudes de actualización ({availabilityRequests.length})
+          </Text>
+          <Text style={[styles.meta, { color: colors.muted }]}>
+            Los clientes solicitaron revisar estos productos. No se crea ningún chat.
+          </Text>
+          {Object.values(groupedAvailabilityRequests).map((request) => (
+            <View key={request.productId} style={[styles.requestRow, { borderColor: colors.border }]}>
+              <Text style={[styles.meta, { color: colors.text, flex: 1 }]}>
+                {request.productName} · {request.count} {request.count === 1 ? 'solicitud' : 'solicitudes'}
+              </Text>
+              <Pressable onPress={() => editRequestedProduct(request.productId)}>
+                <Text style={styles.link}>Actualizar</Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
       <FlatList
         data={products}
         keyExtractor={(item) => item.id}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => {
           const options = item.product_options || [];
+          const metrics = productMetrics[item.id] || { orderCount: 0, requestedUnits: 0 };
+          const effectivelyAvailable = item.is_available
+            && (!item.inventory_enabled
+              || Number(item.stock_quantity || 0) - Number(item.reserved_quantity || 0) > 0);
           return (
             <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
               <View style={styles.productHeader}>
@@ -260,14 +370,29 @@ export default function BusinessCatalogScreen() {
                   {item.category ? <Text style={[styles.meta, { color: colors.muted }]}>{item.category}</Text> : null}
                   <Text style={[styles.price, { color: colors.primary }]}>{formatCOP(item.price)}</Text>
                   <Text style={[styles.meta, { color: colors.muted }]}>
-                    {item.is_available
-                      ? item.inventory_enabled ? `Disponible · Existencias: ${item.stock_quantity}` : 'Disponible · Sin control de existencias'
-                      : 'No disponible'}
+                    {effectivelyAvailable
+                      ? item.inventory_enabled
+                        ? `Disponible · Existencias: ${Math.max(0, Number(item.stock_quantity || 0) - Number(item.reserved_quantity || 0))}`
+                        : 'Disponible · Sin control de existencias'
+                      : 'Agotado'}
+                  </Text>
+                  <Text style={[styles.meta, { color: colors.muted }]}>
+                    Historial: {metrics.orderCount} pedidos · {metrics.requestedUnits} unidades solicitadas
                   </Text>
                 </View>
                 <View style={styles.actions}>
                   <Pressable onPress={() => openEditProduct(item)}><Text style={styles.link}>Editar</Text></Pressable>
                   <Pressable onPress={() => deleteProduct(item)}><Text style={[styles.link, styles.delete]}>Eliminar</Text></Pressable>
+                </View>
+                <View style={styles.availabilityRow}>
+                  <Text style={[styles.meta, { color: colors.text }]}>
+                    Disponibilidad rápida: {effectivelyAvailable ? 'Disponible' : 'Agotado'}
+                  </Text>
+                  <Switch
+                    accessibilityLabel={`Marcar ${item.name} como ${effectivelyAvailable ? 'agotado' : 'disponible'}`}
+                    value={Boolean(effectivelyAvailable)}
+                    onValueChange={(value) => toggleProductAvailability(item, value)}
+                  />
                 </View>
               </View>
               <View style={styles.optionsHeader}>
@@ -349,9 +474,12 @@ const createStyles = () => StyleSheet.create({
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
   title: { fontSize: 21, fontWeight: '800', flex: 1 },
+  requestsCard: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 14 },
+  requestRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, marginTop: 8, paddingTop: 8 },
   list: { paddingBottom: 24, flexGrow: 1 },
   card: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 12 },
   productHeader: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  availabilityRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
   productCopy: { flex: 1 },
   name: { fontSize: 16, fontWeight: '700' },
   price: { fontSize: 15, fontWeight: '700', marginTop: 4 },

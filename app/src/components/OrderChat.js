@@ -26,7 +26,11 @@ export default function OrderChat({ orderId, navigation }) {
   const profile = useAuthStore((state) => state.profile);
   const user = useAuthStore((state) => state.user);
   const theme = useRoleTheme();
+  const isDriver = profile?.role === 'repartidor';
   const [messages, setMessages] = useState([]);
+  const [orderStatus, setOrderStatus] = useState(null);
+  const [orderStatusVerified, setOrderStatusVerified] = useState(false);
+  const [orderStatusError, setOrderStatusError] = useState('');
   const [activeCall, setActiveCall] = useState(null);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
@@ -34,7 +38,9 @@ export default function OrderChat({ orderId, navigation }) {
   const [startingCall, setStartingCall] = useState(false);
   const [requiresPhoneConsent, setRequiresPhoneConsent] = useState(false);
   const [phoneConsent, setPhoneConsent] = useState(false);
+  const [directInteractionBlocked, setDirectInteractionBlocked] = useState(false);
   const routedCallId = useRef(null);
+  const orderStatusRef = useRef(null);
   const senderId = profile?.id || user?.id;
 
   const loadMessages = useCallback(async () => {
@@ -46,6 +52,17 @@ export default function OrderChat({ orderId, navigation }) {
 
     if (error) throw error;
     setMessages(data || []);
+  }, [orderId]);
+
+  const loadOrderStatus = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('status')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error('No tienes acceso a este pedido.');
+    return data.status;
   }, [orderId]);
 
   const openAcceptedCall = useCallback((call) => {
@@ -67,11 +84,64 @@ export default function OrderChat({ orderId, navigation }) {
 
   useEffect(() => {
     let active = true;
-    loadMessages()
-      .catch((error) => console.error('Error cargando chat:', error.message))
-      .finally(() => {
-        if (active) setLoading(false);
+    const refreshBlockState = async () => {
+      const { data, error } = await supabase.rpc('get_order_participant_block_state', {
+        p_order_id: orderId,
       });
+      if (error) {
+        console.error('Error verificando bloqueos del pedido:', error.message);
+        return;
+      }
+      if (active) setDirectInteractionBlocked(Boolean(data?.pair_blocked));
+    };
+    const initialLoad = setTimeout(() => {
+      loadMessages()
+        .catch((error) => console.error('Error cargando chat:', error.message))
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+      refreshBlockState();
+
+      const loadOrderContext = async () => {
+        let status;
+        try {
+          status = await loadOrderStatus();
+        } catch (error) {
+          console.error('No se pudo verificar el estado del chat:', error.message);
+          if (active && isDriver) setOrderStatusError(error.message);
+          return;
+        }
+        if (!active) return;
+        orderStatusRef.current = status;
+        setOrderStatus(status);
+        setOrderStatusVerified(true);
+        setOrderStatusError('');
+        if (isDriver && status === 'entregado') {
+          setMessages([]);
+          setMessage('');
+          setActiveCall(null);
+          setRequiresPhoneConsent(false);
+          setPhoneConsent(false);
+          return;
+        }
+
+        try {
+          const { data: call, error } = await supabase
+            .from('order_calls')
+            .select('*')
+            .eq('order_id', orderId)
+            .in('status', ['ringing', 'accepted'])
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (error) throw error;
+          if (active && call) openAcceptedCall(call);
+        } catch (error) {
+          console.error('Error cargando la llamada del pedido:', error.message);
+        }
+      };
+      void loadOrderContext();
+    }, 0);
 
     const channel = supabase
       .channel(`order-chat:${orderId}`)
@@ -79,6 +149,7 @@ export default function OrderChat({ orderId, navigation }) {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'chats', filter: `order_id=eq.${orderId}` },
         ({ new: incoming }) => {
+          if (isDriver && orderStatusRef.current === 'entregado') return;
           setMessages((current) => (
             current.some((item) => item.id === incoming.id)
               ? current
@@ -94,40 +165,68 @@ export default function OrderChat({ orderId, navigation }) {
         }
       });
 
-    supabase.from('order_calls')
-      .select('*')
-      .eq('order_id', orderId)
-      .in('status', ['ringing', 'accepted'])
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-      .then(({ data, error }) => {
-        if (error) {
-          console.error('Error cargando la llamada del pedido:', error.message);
-        } else if (active && data) {
-          openAcceptedCall(data);
-        }
-      });
-
     const callChannel = supabase
       .channel(`order-calls:${orderId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'order_calls', filter: `order_id=eq.${orderId}` },
-        ({ new: call }) => openAcceptedCall(call),
+        ({ new: call }) => {
+          if (isDriver && (!orderStatusRef.current || orderStatusRef.current === 'entregado')) return;
+          openAcceptedCall(call);
+        },
       )
       .subscribe((status) => {
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.error(`Realtime call subscription failed: ${status}`);
         }
       });
+    const blockChannel = supabase
+      .channel(`order-blocks:${orderId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'order_participant_blocks',
+      }, refreshBlockState)
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`Realtime block subscription failed: ${status}`);
+        }
+      });
+    const orderChannel = supabase
+      .channel(`order-chat-status:${orderId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'orders',
+        filter: `id=eq.${orderId}`,
+      }, ({ new: updatedOrder }) => {
+        orderStatusRef.current = updatedOrder.status;
+        setOrderStatus(updatedOrder.status);
+        setOrderStatusVerified(true);
+        setOrderStatusError('');
+        if (isDriver && updatedOrder.status === 'entregado') {
+          setMessages([]);
+          setMessage('');
+          setActiveCall(null);
+          setRequiresPhoneConsent(false);
+          setPhoneConsent(false);
+        }
+      })
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`Order status subscription failed: ${status}`);
+        }
+      });
 
     return () => {
       active = false;
+      clearTimeout(initialLoad);
       supabase.removeChannel(channel);
       supabase.removeChannel(callChannel);
+      supabase.removeChannel(blockChannel);
+      supabase.removeChannel(orderChannel);
     };
-  }, [loadMessages, openAcceptedCall, orderId]);
+  }, [isDriver, loadMessages, loadOrderStatus, openAcceptedCall, orderId]);
 
   useEffect(() => {
     if (activeCall?.status !== 'ringing') return undefined;
@@ -145,6 +244,7 @@ export default function OrderChat({ orderId, navigation }) {
   const sendMessage = async () => {
     const trimmed = message.trim();
     if (!trimmed || !senderId || sending) return;
+    if (isDriver && orderStatusRef.current === 'entregado') return;
 
     setSending(true);
     try {
@@ -158,6 +258,10 @@ export default function OrderChat({ orderId, navigation }) {
       setRequiresPhoneConsent(false);
       setPhoneConsent(false);
     } catch (error) {
+      if (error.message?.includes('PARTICIPANT_BLOCKED')) {
+        setDirectInteractionBlocked(true);
+        return;
+      }
       if (error.message?.includes('PHONE_CONSENT_REQUIRED')) {
         setRequiresPhoneConsent(true);
         setPhoneConsent(false);
@@ -171,6 +275,7 @@ export default function OrderChat({ orderId, navigation }) {
 
   const handleStartCall = async () => {
     if (!senderId || startingCall) return;
+    if (isDriver && orderStatusRef.current === 'entregado') return;
     setStartingCall(true);
     try {
       const callId = await startOrderCall(orderId);
@@ -190,6 +295,7 @@ export default function OrderChat({ orderId, navigation }) {
 
   const handleCallResponse = async (accept) => {
     if (!activeCall) return;
+    if (isDriver && orderStatusRef.current === 'entregado') return;
     try {
       await respondToOrderCall(activeCall.id, accept);
       if (accept) {
@@ -204,6 +310,7 @@ export default function OrderChat({ orderId, navigation }) {
 
   const handleCancelCall = async () => {
     if (!activeCall) return;
+    if (isDriver && orderStatusRef.current === 'entregado') return;
     try {
       await endOrderCall(activeCall.id);
       setActiveCall(null);
@@ -245,6 +352,34 @@ export default function OrderChat({ orderId, navigation }) {
     );
   };
 
+  const driverChatClosed = isDriver && (
+    orderStatusError
+    || (orderStatusVerified && orderStatus === 'entregado')
+  );
+  const driverStatusPending = isDriver && !orderStatusVerified && !orderStatusError;
+
+  if (driverChatClosed) {
+    return (
+      <View style={styles.closedChat}>
+        <Text style={styles.closedChatText}>
+          {orderStatusError
+            ? 'No se pudo verificar que este pedido siga activo. Por seguridad, el chat está cerrado.'
+            : 'El pedido ya fue entregado. El chat del repartidor se cerró y no está disponible.'}
+        </Text>
+        <AnimatedButton title="Volver" variant="secondary" onPress={() => navigation.goBack()} />
+      </View>
+    );
+  }
+
+  if (driverStatusPending) {
+    return (
+      <View style={styles.closedChat}>
+        <ActivityIndicator color={theme.primary} />
+        <Text style={styles.closedChatText}>Verificando el estado del pedido...</Text>
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -253,6 +388,11 @@ export default function OrderChat({ orderId, navigation }) {
       <Text style={styles.caption}>
         Coordina la entrega y confirma cualquier detalle del pago con el negocio.
       </Text>
+      {directInteractionBlocked ? (
+        <Text style={styles.blockNotice}>
+          La interacción directa entre cliente y repartidor está bloqueada. Puedes seguir coordinando con el negocio.
+        </Text>
+      ) : null}
       <View style={styles.callActions}>
         {!activeCall ? (
           <AnimatedButton
@@ -313,14 +453,14 @@ export default function OrderChat({ orderId, navigation }) {
           placeholder="Escribe un mensaje..."
           accessibilityLabel="Mensaje para el negocio"
           maxLength={1000}
-          editable={!sending}
+          editable={!sending && !directInteractionBlocked}
           onSubmitEditing={sendMessage}
           returnKeyType="send"
         />
         <AnimatedButton
           title={sending ? '...' : 'Enviar'}
           onPress={sendMessage}
-          disabled={sending || !message.trim() || (requiresPhoneConsent && !phoneConsent)}
+          disabled={sending || directInteractionBlocked || !message.trim() || (requiresPhoneConsent && !phoneConsent)}
           buttonStyle={[styles.sendButton, { backgroundColor: theme.primary }]}
         />
       </View>
@@ -330,7 +470,10 @@ export default function OrderChat({ orderId, navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F7FA' },
+  closedChat: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
+  closedChatText: { color: '#555555', fontSize: 14, lineHeight: 21, textAlign: 'center', marginVertical: 16 },
   caption: { color: '#555555', fontSize: 13, paddingHorizontal: 16, paddingTop: 12 },
+  blockNotice: { color: '#8A3B12', fontSize: 13, paddingHorizontal: 16, paddingTop: 8 },
   loader: { marginTop: 24 },
   list: { flexGrow: 1, padding: 15, justifyContent: 'flex-end' },
   bubble: { maxWidth: '82%', padding: 12, borderRadius: 15, marginBottom: 10 },

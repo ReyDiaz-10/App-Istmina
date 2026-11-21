@@ -17,10 +17,17 @@ import { useAuthStore } from '../../store/authStore';
 import { supabase } from '../../api/supabaseClient';
 import AnimatedButton from '../../components/AnimatedButton';
 import { useRoleTheme } from '../../hooks/useRoleTheme';
-import { createOrder, createOrderPaymentLink, quoteDeliveryFee } from '../../services/orders';
+import {
+  createIdempotencyKey,
+  createOrder,
+  createPickupOrder,
+  createOrderPaymentLink,
+  quoteDeliveryFee,
+} from '../../services/orders';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { formatCOP } from '../../utils/formatters';
+import { formatOperatingStatus } from '../../utils/operatingHours';
 
 const CartScreen = ({ navigation }) => {
   const { items, getTotal, clearCart, updateQuantity, removeItem } = useCartStore();
@@ -40,7 +47,12 @@ const CartScreen = ({ navigation }) => {
   const [deliveryLoading, setDeliveryLoading] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
   const [deliveryError, setDeliveryError] = useState(null);
+  const [operatingStatus, setOperatingStatus] = useState(null);
   const [pendingOrderId, setPendingOrderId] = useState(null);
+  const [fulfillmentMode, setFulfillmentMode] = useState('delivery');
+  const [pickupEnabled, setPickupEnabled] = useState(false);
+  const [ordersPaused, setOrdersPaused] = useState(false);
+  const pickupIdempotencyKey = useRef(null);
   const paymentChannel = useRef(null);
   const completedOrder = useRef(null);
 
@@ -69,48 +81,67 @@ const CartScreen = ({ navigation }) => {
 
   useEffect(() => {
     let active = true;
-    setDeliveryMode(null);
-    setDeliveryQuote(null);
-    setDeliveryError(null);
-    setDeliveryLocation(null);
-    setDeliveryAddress('');
-    setDeliveryInstructions('');
-    if (!businessId) return undefined;
 
     const loadDeliveryMode = async () => {
       try {
-        const { data, error } = await supabase
+        const [modeResult, statusResult] = await Promise.all([
+          supabase
           .from('businesses')
-          .select('delivery_fee_mode')
+          .select('delivery_fee_mode, pickup_enabled, orders_paused')
           .eq('id', businessId)
-          .maybeSingle();
-        if (error) throw error;
-        if (!data) throw new Error('No se encontró la tarifa del negocio.');
-        if (active) setDeliveryMode(data.delivery_fee_mode);
+          .maybeSingle(),
+          supabase.rpc('get_business_operating_status', { p_business_id: businessId }),
+        ]);
+        if (modeResult.error) throw modeResult.error;
+        if (!modeResult.data) throw new Error('No se encontró la tarifa del negocio.');
+        if (statusResult.error) throw statusResult.error;
+        if (active) {
+          setDeliveryMode(modeResult.data.delivery_fee_mode);
+          setPickupEnabled(modeResult.data.pickup_enabled !== false);
+          setOrdersPaused(modeResult.data.orders_paused === true);
+          if (modeResult.data.pickup_enabled === false) setFulfillmentMode('delivery');
+          setOperatingStatus(statusResult.data || null);
+        }
       } catch (error) {
         if (active) setDeliveryError(error.message);
       }
     };
 
-    loadDeliveryMode();
+    const initialLoad = setTimeout(() => {
+      if (!active) return;
+      setDeliveryMode(null);
+      setDeliveryQuote(null);
+      setDeliveryError(null);
+      setDeliveryLocation(null);
+      setDeliveryAddress('');
+      setDeliveryInstructions('');
+      if (businessId) void loadDeliveryMode();
+    }, 0);
     return () => {
       active = false;
+      clearTimeout(initialLoad);
     };
   }, [businessId]);
 
   useEffect(() => {
     let active = true;
-    setDeliveryQuote(null);
     if (
       !businessId
+      || fulfillmentMode === 'pickup'
       || !deliveryMode
       || !deliveryLocation
     ) {
-      setDeliveryLoading(false);
-      return undefined;
+      const finishLoading = setTimeout(() => {
+        if (active) setDeliveryLoading(false);
+      }, 0);
+      return () => {
+        active = false;
+        clearTimeout(finishLoading);
+      };
     }
 
     const loadQuote = async () => {
+      setDeliveryQuote(null);
       setDeliveryLoading(true);
       setDeliveryError(null);
       try {
@@ -131,7 +162,7 @@ const CartScreen = ({ navigation }) => {
     return () => {
       active = false;
     };
-  }, [businessId, deliveryLocation, deliveryMode]);
+  }, [businessId, deliveryLocation, deliveryMode, fulfillmentMode]);
 
   const openChatAfterPayment = useCallback((orderId) => {
     if (completedOrder.current === orderId) return;
@@ -200,36 +231,65 @@ const CartScreen = ({ navigation }) => {
       Alert.alert('Un solo negocio por pedido', 'Finaliza este pedido antes de agregar productos de otro negocio.');
       return;
     }
-    if (!deliveryMode || !deliveryQuote) {
+    if (ordersPaused && !pendingOrderId) {
+      Alert.alert('Pedidos pausados', 'El negocio no está aceptando pedidos nuevos en este momento.');
+      return;
+    }
+    if (operatingStatus?.configured) {
+      const statusResult = await supabase.rpc('get_business_operating_status', {
+        p_business_id: businessId,
+      });
+      if (statusResult.error) {
+        Alert.alert('No se pudo validar el horario', statusResult.error.message);
+        return;
+      }
+      const currentStatus = statusResult.data;
+      setOperatingStatus(currentStatus);
+      if (!currentStatus?.is_open) {
+        const schedule = currentStatus?.opens_at && currentStatus?.closes_at
+          ? `Horario operativo: ${currentStatus.opens_at} a ${currentStatus.closes_at}.`
+          : 'El negocio no tiene atención configurada para hoy.';
+        Alert.alert('Negocio cerrado', `${currentStatus?.message || 'No puedes realizar pedidos en este momento.'}\n${schedule}`);
+        return;
+      }
+    }
+    if (fulfillmentMode === 'delivery' && (!deliveryMode || !deliveryQuote)) {
       Alert.alert(
         'Domicilio pendiente',
         deliveryError || 'Espera a que se calcule la tarifa antes de continuar.',
       );
       return;
     }
-    if (!deliveryLocation) {
+    if (fulfillmentMode === 'delivery' && !deliveryLocation) {
       Alert.alert('Ubicación necesaria', 'Comparte tu ubicación GPS para coordinar la entrega.');
       return;
     }
-    if (!deliveryAddress.trim()) {
+    if (fulfillmentMode === 'delivery' && !deliveryAddress.trim()) {
       Alert.alert('Dirección necesaria', 'Escribe la dirección o las indicaciones suficientes para llegar a tu domicilio.');
       return;
     }
-    if (hasSavedAddress && !addressChoice) {
+    if (fulfillmentMode === 'delivery' && hasSavedAddress && !addressChoice) {
       Alert.alert('Confirma la dirección', 'Confirma si deseas usar la dirección habitual o edítala antes de continuar.');
       return;
     }
     setLoading(true);
 
     try {
-      const orderId = pendingOrderId || await createOrder({
-        businessId,
-        items,
-        deliveryLatitude: deliveryLocation.latitude,
-        deliveryLongitude: deliveryLocation.longitude,
-        deliveryAddress: deliveryAddress.trim(),
-        deliveryInstructions: deliveryInstructions.trim() || null,
-      });
+      if (!pickupIdempotencyKey.current) {
+        pickupIdempotencyKey.current = createIdempotencyKey();
+      }
+      const creatingPickupOrder = !pendingOrderId && fulfillmentMode === 'pickup';
+      const orderId = pendingOrderId || (creatingPickupOrder
+        ? await createPickupOrder({ businessId, items, idempotencyKey: pickupIdempotencyKey.current })
+        : await createOrder({
+          businessId,
+          items,
+          deliveryLatitude: deliveryLocation.latitude,
+          deliveryLongitude: deliveryLocation.longitude,
+          deliveryAddress: deliveryAddress.trim(),
+          deliveryInstructions: deliveryInstructions.trim() || null,
+        }));
+      if (creatingPickupOrder) pickupIdempotencyKey.current = null;
       setPendingOrderId(orderId);
       watchPayment(orderId);
 
@@ -323,7 +383,13 @@ const CartScreen = ({ navigation }) => {
       />
 
       <View style={[styles.footer, { backgroundColor: colors.surface }]}>
-        <View style={styles.locationSection}>
+        {pickupEnabled ? (
+          <View style={styles.fulfillmentChoices}>
+            <AnimatedButton title="Domicilio" variant={fulfillmentMode === 'delivery' ? 'primary' : 'secondary'} onPress={() => setFulfillmentMode('delivery')} disabled={Boolean(pendingOrderId)} />
+            <AnimatedButton title="Retiro en tienda" variant={fulfillmentMode === 'pickup' ? 'primary' : 'secondary'} onPress={() => { setDeliveryQuote(null); setFulfillmentMode('pickup'); }} disabled={Boolean(pendingOrderId)} />
+          </View>
+        ) : null}
+        {fulfillmentMode === 'delivery' ? <View style={styles.locationSection}>
           <Text style={[styles.deliveryHint, { color: colors.muted }]}>
             Escribe la dirección y las indicaciones que ayuden al repartidor a llegar a tu domicilio.
           </Text>
@@ -390,15 +456,15 @@ const CartScreen = ({ navigation }) => {
               Ubicación GPS capturada correctamente.
             </Text>
           ) : null}
-        </View>
+        </View> : <Text style={[styles.deliveryHint, { color: colors.muted }]}>Recogerás el pedido en el negocio. No se cobrará domicilio y el negocio verá que es retiro en tienda.</Text>}
         <View style={styles.feeRow}>
           <Text style={[styles.feeLabel, { color: colors.muted }]}>Subtotal de productos</Text>
           <Text style={[styles.feeValue, { color: colors.text }]}>{formatCOP(getTotal(), locale)}</Text>
         </View>
         <View style={styles.feeRow}>
-          <Text style={[styles.feeLabel, { color: colors.muted }]}>Domicilio</Text>
+          <Text style={[styles.feeLabel, { color: colors.muted }]}>{fulfillmentMode === 'pickup' ? 'Retiro en tienda' : 'Domicilio'}</Text>
           <Text style={[styles.feeValue, { color: colors.text }]}>
-            {deliveryLoading
+            {fulfillmentMode === 'pickup' ? formatCOP(0, locale) : deliveryLoading
               ? 'Calculando...'
               : deliveryQuote
                 ? formatCOP(deliveryFee, locale)
@@ -412,13 +478,32 @@ const CartScreen = ({ navigation }) => {
             Distancia directa: {(Number(deliveryQuote.distance_meters) / 1000).toFixed(2)} km
           </Text>
         ) : null}
+        {operatingStatus?.configured ? (
+          <Text
+            accessibilityRole="alert"
+            style={[
+              styles.deliveryHint,
+              {
+                color: operatingStatus.is_open ? colors.primary : '#B3261E',
+                fontWeight: '700',
+              },
+            ]}
+          >
+            {formatOperatingStatus(operatingStatus)}
+          </Text>
+        ) : null}
+        {ordersPaused ? (
+          <Text accessibilityRole="alert" style={styles.deliveryError}>
+            El negocio pausó temporalmente los pedidos nuevos. Los pedidos existentes no se afectan.
+          </Text>
+        ) : null}
         {deliveryError ? (
           <Text accessibilityRole="alert" style={styles.deliveryError}>{deliveryError}</Text>
         ) : null}
         <Text style={[styles.totalLabel, { color: colors.text }]}>
           Total a pagar:{' '}
           <Text style={styles.totalAmount}>
-            {deliveryQuote ? formatCOP(orderTotal, locale) : 'Pendiente de calcular'}
+            {fulfillmentMode === 'pickup' || deliveryQuote ? formatCOP(orderTotal, locale) : 'Pendiente de calcular'}
           </Text>
         </Text>
         <Text style={[styles.paymentLabel, { color: colors.muted }]}>Pago seguro en línea con Wompi</Text>
@@ -432,11 +517,12 @@ const CartScreen = ({ navigation }) => {
           onPress={handleCheckout}
           disabled={loading || (Boolean(user) && (
             items.length === 0
-            || !deliveryQuote
-            || deliveryLoading
-            || !deliveryLocation
-            || !deliveryAddress.trim()
-            || (hasSavedAddress && !addressChoice)
+            || (ordersPaused && !pendingOrderId)
+            || (fulfillmentMode === 'delivery' && (!deliveryQuote
+              || deliveryLoading
+              || !deliveryLocation
+              || !deliveryAddress.trim()
+              || (hasSavedAddress && !addressChoice)))
           ))}
           style={styles.checkoutBtn}
           buttonStyle={styles.checkoutSurface}
@@ -450,6 +536,7 @@ const CartScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F7FA', padding: 20 },
+  fulfillmentChoices: { gap: 8, marginBottom: 12 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   title: { fontSize: 24, fontWeight: 'bold', color: '#1A237E' },
   itemCard: { 

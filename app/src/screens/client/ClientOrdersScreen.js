@@ -1,5 +1,5 @@
 import { AppText as Text } from '../../components/AppText.js';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -20,6 +20,10 @@ import { usePreferencesStore } from '../../store/preferencesStore';
 import { formatCOP } from '../../utils/formatters';
 import { useTranslation } from '../../hooks/useTranslation';
 import { getProfilePhotoUrl } from '../../services/onboardingMedia';
+import {
+  getCustomerDeliveryMinutes,
+  getCustomerPreparationMinutes,
+} from '../../utils/deliveryEtas.js';
 
 const CHAT_STATUSES = [
   'pagado',
@@ -28,6 +32,7 @@ const CHAT_STATUSES = [
   'repartidor_asignado',
   'recogido',
   'en_camino',
+  'no_entregado',
   'entregado',
 ];
 
@@ -42,12 +47,22 @@ const ClientOrdersScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [cancellingOrderId, setCancellingOrderId] = useState(null);
   const [deliveryCodes, setDeliveryCodes] = useState({});
-  const [now, setNow] = useState(Date.now());
+  const [pickupClaimCodes, setPickupClaimCodes] = useState({});
+  const [deliveryIncidents, setDeliveryIncidents] = useState({});
+  const [blockStates, setBlockStates] = useState({});
+  const [updatingBlockOrderId, setUpdatingBlockOrderId] = useState(null);
+  const [now, setNow] = useState(0);
+  const orderStatusSnapshot = useRef(new Map());
+  const hasOrderStatusSnapshot = useRef(false);
   const userId = profile?.id || user?.id;
 
   useEffect(() => {
+    const initialClock = setTimeout(() => setNow(Date.now()), 0);
     const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(initialClock);
+      clearInterval(timer);
+    };
   }, []);
 
   const fetchOrders = useCallback(async () => {
@@ -71,8 +86,16 @@ const ClientOrdersScreen = ({ navigation }) => {
 
       if (error) throw error;
       const ordersWithDrivers = data || [];
+      const newlyDeliveredOrders = hasOrderStatusSnapshot.current
+        ? ordersWithDrivers.filter((order) => (
+          order.status === 'entregado'
+          && orderStatusSnapshot.current.get(order.id) !== 'entregado'
+        ))
+        : [];
+      orderStatusSnapshot.current = new Map(ordersWithDrivers.map((order) => [order.id, order.status]));
+      hasOrderStatusSnapshot.current = true;
       const codeResults = await Promise.all(ordersWithDrivers
-        .filter((order) => [
+        .filter((order) => order.delivery_mode !== 'pickup' && [
           'pagado',
           'preparando',
           'listo_para_repartidor',
@@ -91,10 +114,19 @@ const ClientOrdersScreen = ({ navigation }) => {
           return [order.id, verification?.delivery_code];
         }));
       setDeliveryCodes(Object.fromEntries(codeResults.filter(Boolean)));
-      const profileIds = [...new Set(ordersWithDrivers
-        .filter((order) => ['repartidor_asignado', 'recogido', 'en_camino'].includes(order.status))
-        .map((order) => order.drivers?.profile_id)
-        .filter(Boolean))];
+      const pickupResults = await Promise.all(ordersWithDrivers
+        .filter((order) => order.delivery_mode === 'pickup' && ['pagado', 'preparando'].includes(order.status))
+        .map(async (order) => {
+          const { data: code, error: codeError } = await supabase.rpc('get_my_pickup_claim_code', { p_order_id: order.id });
+          if (codeError) { console.error('No se pudo cargar el código para reclamar:', codeError.message); return null; }
+          return [order.id, code];
+        }));
+      setPickupClaimCodes(Object.fromEntries(pickupResults.filter(Boolean)));
+      const blockableOrders = ordersWithDrivers.filter((order) => (
+        ['preparando', 'repartidor_asignado', 'recogido', 'en_camino', 'no_entregado', 'entregado'].includes(order.status)
+        && order.drivers?.profile_id
+      ));
+      const profileIds = [...new Set(blockableOrders.map((order) => order.drivers.profile_id))];
       if (profileIds.length) {
         const { data: driverProfiles, error: profilesError } = await supabase
           .from('profiles')
@@ -120,16 +152,54 @@ const ClientOrdersScreen = ({ navigation }) => {
       } else {
         setOrders(ordersWithDrivers);
       }
+      if (newlyDeliveredOrders.length && navigation.isFocused()) {
+        const completedOrder = newlyDeliveredOrders[0];
+        setTimeout(() => {
+          if (navigation.isFocused()) {
+            navigation.navigate('ClientOrderFeedback', { orderId: completedOrder.id });
+          }
+        }, 0);
+      }
+
+      const orderIds = ordersWithDrivers.map((order) => order.id);
+      if (orderIds.length) {
+        const { data: incidents, error: incidentError } = await supabase
+          .from('order_delivery_incidents')
+          .select('id, order_id, driver_id, reason, status, reported_at, returned_at')
+          .in('order_id', orderIds)
+          .order('reported_at', { ascending: false });
+        if (incidentError) throw incidentError;
+        const latestIncidents = {};
+        for (const incident of incidents || []) {
+          if (!latestIncidents[incident.order_id]) latestIncidents[incident.order_id] = incident;
+        }
+        setDeliveryIncidents(latestIncidents);
+
+        const states = await Promise.all(blockableOrders.map(async (order) => {
+          const { data: state, error: blockError } = await supabase.rpc(
+            'get_order_participant_block_state',
+            { p_order_id: order.id },
+          );
+          if (blockError) throw blockError;
+          return [order.id, state || { blocked_by_me: false, blocked_by_other: false }];
+        }));
+        setBlockStates(Object.fromEntries(states));
+      } else {
+        setDeliveryIncidents({});
+        setBlockStates({});
+      }
     } catch (error) {
       console.error('Error cargando pedidos:', error.message);
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [navigation, userId]);
 
   useEffect(() => {
-    fetchOrders();
-    if (!userId) return undefined;
+    const initialLoad = setTimeout(() => {
+      void fetchOrders();
+    }, 0);
+    if (!userId) return () => clearTimeout(initialLoad);
 
     const channel = supabase
       .channel(`client-orders:${userId}`)
@@ -161,12 +231,47 @@ const ClientOrdersScreen = ({ navigation }) => {
           console.error(`Realtime order refund subscription failed: ${status}`);
         }
       });
+    const incidentsChannel = supabase
+      .channel(`client-order-incidents:${userId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'order_delivery_incidents',
+      }, () => fetchOrders())
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'order_participant_blocks',
+      }, () => fetchOrders())
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error(`Realtime delivery incident subscription failed: ${status}`);
+        }
+      });
 
     return () => {
+      clearTimeout(initialLoad);
       supabase.removeChannel(channel);
       supabase.removeChannel(refundsChannel);
+      supabase.removeChannel(incidentsChannel);
     };
   }, [fetchOrders, userId]);
+
+  const toggleDriverBlock = async (orderId, blockedByMe) => {
+    setUpdatingBlockOrderId(orderId);
+    try {
+      const { data, error } = await supabase.rpc('set_order_participant_block', {
+        p_order_id: orderId,
+        p_blocked: !blockedByMe,
+      });
+      if (error) throw error;
+      setBlockStates((current) => ({ ...current, [orderId]: data }));
+    } catch (error) {
+      Alert.alert('No se pudo actualizar el bloqueo', error.message);
+    } finally {
+      setUpdatingBlockOrderId(null);
+    }
+  };
 
   const cancelOrder = (orderId) => {
     Alert.alert(
@@ -206,8 +311,15 @@ const ClientOrdersScreen = ({ navigation }) => {
   const renderOrder = ({ item }) => {
     const driver = item.drivers;
     const chatAvailable = CHAT_STATUSES.includes(item.status);
+    const blockState = blockStates[item.id] || { blocked_by_me: false, blocked_by_other: false };
+    const prepEtaMinutes = now > 0 && ['preparando', 'listo_para_repartidor', 'repartidor_asignado'].includes(item.status)
+      ? getCustomerPreparationMinutes(item.business_prep_eta_at, now)
+      : null;
+    const deliveryEtaMinutes = now > 0 && item.status === 'en_camino'
+      ? getCustomerDeliveryMinutes(item.driver_arrival_eta_at, now)
+      : null;
     const canCancel = item.status === 'pendiente'
-      || (item.status === 'pagado' && item.cancel_until_at && new Date(item.cancel_until_at).getTime() > now);
+      || (now > 0 && item.status === 'pagado' && item.cancel_until_at && new Date(item.cancel_until_at).getTime() > now);
     const refundStatus = item.order_refunds?.[0]?.status;
     const refundLabels = {
       requested: 'Reembolso solicitado a Wompi',
@@ -231,7 +343,37 @@ const ClientOrdersScreen = ({ navigation }) => {
         <Text style={[styles.details, { color: colors.muted }]}>
           Pedido #{item.order_number || item.id.slice(0, 8)} · {t('orders.total')} {formatCOP(item.total_amount, locale)}
         </Text>
+        {item.delivery_mode === 'pickup' ? <Text style={[styles.etaText, { color: colors.primary, fontWeight: '800' }]}>RETIRO EN TIENDA · No se asignará repartidor ni se cobrará domicilio.</Text> : null}
+        {pickupClaimCodes[item.id] ? <View style={styles.pickupCodeCard}><Text style={styles.pickupCodeLabel}>Código para reclamar el pedido</Text><Text selectable style={styles.pickupCode}>{pickupClaimCodes[item.id]}</Text><Text style={styles.etaText}>Muéstralo en el negocio al recoger.</Text></View> : null}
         <OrderStatusAnimation status={item.status} />
+        {item.status === 'entregado' && item.driver_id ? (
+          <AnimatedButton
+            title="Calificar o comentar la entrega"
+            onPress={() => navigation.navigate('ClientOrderFeedback', { orderId: item.id })}
+            style={styles.feedbackButton}
+          />
+        ) : null}
+        {prepEtaMinutes !== null ? (
+          <Text style={[styles.etaText, { color: colors.muted }]}>
+            Tiempo aproximado de preparación: {prepEtaMinutes} min
+          </Text>
+        ) : null}
+        {deliveryEtaMinutes !== null ? (
+          <Text style={[styles.etaText, { color: colors.muted }]}>
+            Llegada aproximada del repartidor: {deliveryEtaMinutes} min
+          </Text>
+        ) : null}
+        {item.status === 'no_entregado' ? (
+          <View style={styles.incidentCard}>
+            <Text style={styles.incidentTitle}>Entrega no completada</Text>
+            <Text style={styles.incidentText}>
+              Motivo: {deliveryIncidents[item.id]?.reason || 'El repartidor registró una incidencia.'}
+            </Text>
+            <Text style={styles.incidentText}>
+              El negocio debe confirmar la devolución antes de reasignar o cancelar el pedido.
+            </Text>
+          </View>
+        ) : null}
         {deliveryCodes[item.id] ? (
           <View style={styles.deliveryCodeCard}>
             <Text style={styles.deliveryCodeLabel}>Código para recibir tu pedido</Text>
@@ -246,7 +388,7 @@ const ClientOrdersScreen = ({ navigation }) => {
           </Text>
         ) : null}
 
-        {['repartidor_asignado', 'recogido', 'en_camino'].includes(item.status) && driver && (
+        {item.delivery_mode !== 'pickup' && ['preparando', 'repartidor_asignado', 'recogido', 'en_camino'].includes(item.status) && driver && (
           <View style={styles.driverCard}>
             <Image
               source={{ uri: driver.profiles?.avatar_url || 'https://via.placeholder.com/50' }}
@@ -259,15 +401,33 @@ const ClientOrdersScreen = ({ navigation }) => {
               <Text style={styles.plateText}>
                 {t('orders.plate')} <Text style={styles.plateValue}>{driver.plate_number || t('orders.pending')}</Text>
               </Text>
+              {blockState.blocked_by_me ? (
+                <Text style={styles.blockNotice}>Bloqueaste la interacción directa con este repartidor.</Text>
+              ) : blockState.blocked_by_other ? (
+                <Text style={styles.blockNotice}>Este repartidor bloqueó la interacción directa contigo.</Text>
+              ) : null}
             </View>
             <Text style={styles.bikeEmoji}>🛵</Text>
           </View>
+        )}
+        {driver && item.delivery_mode !== 'pickup' && (
+          <AnimatedButton
+            title={updatingBlockOrderId === item.id
+              ? 'Actualizando...'
+              : blockState.blocked_by_other
+                ? 'Bloqueo activo por el repartidor'
+                : blockState.blocked_by_me ? 'Desbloquear repartidor' : 'Bloquear repartidor'}
+            onPress={() => toggleDriverBlock(item.id, blockState.blocked_by_me)}
+            disabled={updatingBlockOrderId === item.id || blockState.blocked_by_other}
+            variant="secondary"
+            style={styles.blockButton}
+          />
         )}
 
         <AnimatedButton
           title={chatAvailable ? t('orders.chat') : t('orders.chatUnavailable')}
           onPress={() => navigation.navigate('OrderChat', { orderId: item.id })}
-          disabled={!chatAvailable}
+          disabled={!chatAvailable || blockState.pair_blocked}
           style={styles.chatButton}
           buttonStyle={styles.chatButtonSurface}
         />
@@ -330,6 +490,10 @@ const styles = StyleSheet.create({
   storeName: { flex: 1, fontSize: 17, fontWeight: 'bold', color: '#1A237E' },
   status: { fontSize: 11, fontWeight: '700', marginLeft: 8 },
   details: { fontSize: 14, color: '#666666' },
+  etaText: { fontSize: 14, fontWeight: '700', marginTop: 8 },
+  incidentCard: { backgroundColor: '#FFF3E0', borderRadius: 10, padding: 12, marginTop: 12 },
+  incidentTitle: { color: '#7A4300', fontSize: 15, fontWeight: '700' },
+  incidentText: { color: '#5D4037', fontSize: 13, lineHeight: 18, marginTop: 6 },
   driverCard: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -344,11 +508,17 @@ const styles = StyleSheet.create({
   plateText: { fontSize: 13, color: '#757575' },
   plateValue: { fontWeight: 'bold', color: '#1A237E' },
   bikeEmoji: { fontSize: 24 },
+  blockNotice: { fontSize: 12, color: '#8A3B12', marginTop: 5 },
+  blockButton: { alignSelf: 'stretch', marginTop: 8 },
   chatButton: { alignSelf: 'stretch', marginTop: 12 },
+  feedbackButton: { alignSelf: 'stretch', marginTop: 12 },
   chatButtonSurface: { width: '100%' },
   cancelButton: { alignSelf: 'stretch', marginTop: 8 },
   cancelButtonSurface: { width: '100%', borderColor: '#B3261E' },
   refundStatus: { fontSize: 13, lineHeight: 18, marginTop: 10 },
+  pickupCodeCard: { backgroundColor: '#FFF3D6', borderRadius: 10, padding: 12, marginTop: 12, alignItems: 'center' },
+  pickupCodeLabel: { color: '#704900', fontWeight: '700', fontSize: 13 },
+  pickupCode: { color: '#704900', fontSize: 26, fontWeight: '900', letterSpacing: 5, marginTop: 2 },
   deliveryCodeCard: { backgroundColor: '#E8F5E9', borderRadius: 10, padding: 12, marginTop: 12, alignItems: 'center' },
   deliveryCodeLabel: { color: '#1B5E20', fontWeight: '700', fontSize: 13 },
   deliveryCode: { color: '#1B5E20', fontSize: 26, fontWeight: '900', letterSpacing: 5, marginTop: 2 },

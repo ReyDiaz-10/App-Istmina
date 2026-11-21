@@ -12,6 +12,7 @@ export default function WalletCard({
   loading = false,
   onTopUp,
   onSubscribe,
+  onTransferBalance,
 }) {
   const { colors } = useAppTheme();
   const locale = usePreferencesStore((state) => state.language);
@@ -42,6 +43,13 @@ export default function WalletCard({
           disabled={loading}
           style={styles.action}
           buttonStyle={[styles.button, { backgroundColor: colors.primary, borderColor: colors.primary }]}
+        />
+        <AnimatedButton
+          title="Transferir saldo a otro negocio"
+          onPress={onTransferBalance}
+          disabled={loading}
+          variant="secondary"
+          style={styles.action}
         />
         <AnimatedButton
           title={subscriptionActive ? 'Suscripción activa' : 'Suscribirme $35.000/mes'}

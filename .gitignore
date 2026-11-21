@@ -4,5 +4,6 @@ node_modules/
 .expo/
 .vercel
 .env*
+istmiya v1.0.0.apk
 /app.json
 /eas.json

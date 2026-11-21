@@ -1,6 +1,6 @@
 import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/driver/DriverHomeScreen.js
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -21,6 +21,7 @@ import { formatCOP } from '../../utils/formatters';
 import DriverPayoutWalletCard from '../../components/DriverPayoutWalletCard';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { getDriverBusinessTargetMinutes } from '../../utils/deliveryEtas.js';
 
 const DriverHomeScreen = ({ navigation }) => {
   const { profile } = useAuthStore();
@@ -35,28 +36,81 @@ const DriverHomeScreen = ({ navigation }) => {
   const [activeOrder, setActiveOrder] = useState(null);
   const [pickupCode, setPickupCode] = useState('');
   const [deliveryCode, setDeliveryCode] = useState('');
+  const [arrivalMinutes, setArrivalMinutes] = useState('');
+  const [deliveryFailureReason, setDeliveryFailureReason] = useState('');
+  const [activeIncident, setActiveIncident] = useState(null);
+  const [blockState, setBlockState] = useState({ blocked_by_me: false, blocked_by_other: false });
   const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    initializeDriver();
-    // Suscripción en tiempo real para pedidos disponibles y órdenes activas
-    const subscription = supabase
-      .channel('driver-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchAvailableOrders();
-        fetchActiveOrder();
-      })
-      .subscribe();
-
-    return () => supabase.removeChannel(subscription);
-  }, []);
+  const [now, setNow] = useState(0);
 
   // --- LÓGICA DE DATOS ---
 
-  const initializeDriver = async () => {
-    setLoading(true);
+  const fetchAvailableOrders = useCallback(async (driver = driverData) => {
+    if (!driver?.is_available || driver.verification_status !== 'aprobado') return;
+
     try {
-      // 1. Obtener o crear el registro en la tabla 'drivers'
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, businesses(store_name, address)')
+        .in('status', ['preparando', 'listo_para_repartidor'])
+        .eq('delivery_mode', 'delivery')
+        .is('driver_id', null);
+      if (error) throw error;
+      setAvailableOrders((data || []).filter((order) => (
+        order.status === 'listo_para_repartidor' || order.business_prep_eta_at
+      )));
+    } catch (error) {
+      console.error(error);
+    }
+  }, [driverData]);
+
+  const fetchActiveOrder = useCallback(async (driverId = driverData?.id) => {
+    if (!driverId) return;
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, businesses(store_name, address), profiles(full_name)')
+        .eq('driver_id', driverId)
+        .in('status', ['preparando', 'repartidor_asignado', 'recogido', 'en_camino', 'no_entregado'])
+        .maybeSingle();
+
+      if (error) throw error;
+      setActiveOrder(data);
+      if (data?.status === 'no_entregado') {
+        const { data: incident, error: incidentError } = await supabase
+          .from('order_delivery_incidents')
+          .select('reason, status, reported_at')
+          .eq('order_id', data.id)
+          .eq('driver_id', driverId)
+          .order('reported_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (incidentError) throw incidentError;
+        setActiveIncident(incident);
+      } else {
+        setActiveIncident(null);
+      }
+      if (data?.driver_id) {
+        const { data: currentBlockState, error: blockError } = await supabase.rpc(
+          'get_order_participant_block_state',
+          { p_order_id: data.id },
+        );
+        if (blockError) throw blockError;
+        setBlockState(currentBlockState || { blocked_by_me: false, blocked_by_other: false });
+      } else {
+        setBlockState({ blocked_by_me: false, blocked_by_other: false });
+      }
+    } catch (error) {
+      console.error(error);
+    }
+  }, [driverData?.id]);
+
+  const initializeDriver = useCallback(async () => {
+    if (!profile?.id) {
+      setLoading(false);
+      return;
+    }
+    try {
       const { data, error } = await supabase
         .from('drivers')
         .select('*')
@@ -65,23 +119,49 @@ const DriverHomeScreen = ({ navigation }) => {
 
       if (error) throw error;
       setDriverData(data);
-
       await fetchActiveOrder(data.id);
       await fetchAvailableOrders(data);
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'No se pudo cargar el perfil de repartidor');
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchActiveOrder, fetchAvailableOrders, profile]);
 
-  const toggleAvailability = async (value) => {    if (driverData?.verification_status !== 'aprobado') {
+  useEffect(() => {
+    const initialLoad = setTimeout(() => {
+      void initializeDriver();
+    }, 0);
+    const subscription = supabase
+      .channel('driver-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchAvailableOrders();
+        fetchActiveOrder();
+      })
+      .subscribe();
+
+    return () => {
+      clearTimeout(initialLoad);
+      supabase.removeChannel(subscription);
+    };
+  }, [fetchActiveOrder, fetchAvailableOrders, initializeDriver]);
+
+  useEffect(() => {
+    const initialClock = setTimeout(() => setNow(Date.now()), 0);
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => {
+      clearTimeout(initialClock);
+      clearInterval(timer);
+    };
+  }, []);
+
+  const toggleAvailability = async (value) => {
+    if (driverData?.verification_status !== 'aprobado') {
       Alert.alert('Verificación pendiente', 'Tu perfil debe ser aprobado antes de conectarte.');
       return;
     }
 
     try {
-      const status = value ? 'disponible' : 'offline';
       const { error } = await supabase
         .from('drivers')
         .update({ is_available: value })
@@ -96,41 +176,6 @@ const DriverHomeScreen = ({ navigation }) => {
     }
   };
 
-  const fetchAvailableOrders = async (driver = driverData) => {
-    // Solo buscamos pedidos si el repartidor está disponible
-    if (!driver?.is_available || driver.verification_status !== 'aprobado') return;
-
-    try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*, businesses(store_name, address)')
-        .eq('status', 'listo_para_repartidor')
-        .is('driver_id', null); // Que nadie lo haya tomado aún
-
-      if (error) throw error;
-      setAvailableOrders(data);
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const fetchActiveOrder = async (driverId = driverData?.id) => {
-    if (!driverId) return;
-    try {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*, businesses(store_name, address), profiles(full_name)')
-        .eq('driver_id', driverId)
-        .in('status', ['repartidor_asignado', 'recogido', 'en_camino'])
-        .maybeSingle();
-
-      if (error) throw error;
-      setActiveOrder(data);
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
   const acceptOrder = async (orderId) => {
     setLoading(true);
     try {
@@ -141,7 +186,12 @@ const DriverHomeScreen = ({ navigation }) => {
       await fetchActiveOrder();
       setAvailableOrders([]);
     } catch (error) {
-      Alert.alert('Error', 'Este pedido ya fue tomado por otro repartidor');
+      Alert.alert(
+        'No se pudo aceptar el pedido',
+        error.message?.includes('PARTICIPANT_BLOCKED')
+          ? 'No puedes aceptar este pedido porque existe un bloqueo entre tu cuenta y el cliente.'
+          : 'Este pedido ya fue tomado o no está disponible.',
+      );
     } finally {
       setLoading(false);
     }
@@ -163,10 +213,11 @@ const DriverHomeScreen = ({ navigation }) => {
         return;
       }
 
-      Alert.alert('Entrega Exitosa', 'Has completado la entrega correctamente.');
+      const completedOrderId = activeOrder.id;
       setActiveOrder(null);
       setDeliveryCode('');
-      fetchAvailableOrders();
+      void fetchAvailableOrders();
+      navigation.navigate('DriverOrderClosureFeedback', { orderId: completedOrderId });
     } catch (error) {
       Alert.alert('Error', error.message);
     }
@@ -194,14 +245,54 @@ const DriverHomeScreen = ({ navigation }) => {
   };
 
   const startDelivery = async () => {
-    const { error } = await supabase.rpc('driver_start_delivery', {
+    const minutes = Number(arrivalMinutes);
+    if (!/^\d{1,4}$/.test(arrivalMinutes) || !Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+      Alert.alert('Tiempo inválido', 'Indica entre 1 y 1440 minutos para llegar al cliente.');
+      return;
+    }
+    const { error } = await supabase.rpc('driver_start_delivery_with_eta', {
       p_order_id: activeOrder.id,
+      p_minutes: minutes,
     });
     if (error) {
       Alert.alert('No se pudo iniciar la entrega', error.message);
       return;
     }
+    setArrivalMinutes('');
     await fetchActiveOrder();
+  };
+
+  const reportDeliveryFailure = async () => {
+    const reason = deliveryFailureReason.trim();
+    if (!reason) {
+      Alert.alert('Motivo requerido', 'Describe brevemente por qué no fue posible entregar el pedido.');
+      return;
+    }
+    try {
+      const { error } = await supabase.rpc('report_order_delivery_failure', {
+        p_order_id: activeOrder.id,
+        p_reason: reason,
+      });
+      if (error) throw error;
+      setDeliveryFailureReason('');
+      await fetchActiveOrder();
+      Alert.alert('Incidencia registrada', 'Regresa al negocio con el pedido. El comercio debe confirmar la devolución para resolverlo.');
+    } catch (error) {
+      Alert.alert('No se pudo registrar la incidencia', error.message);
+    }
+  };
+
+  const toggleClientBlock = async () => {
+    try {
+      const { data, error } = await supabase.rpc('set_order_participant_block', {
+        p_order_id: activeOrder.id,
+        p_blocked: !blockState.blocked_by_me,
+      });
+      if (error) throw error;
+      setBlockState(data || { blocked_by_me: false, blocked_by_other: false });
+    } catch (error) {
+      Alert.alert('No se pudo actualizar el bloqueo', error.message);
+    }
   };
 
   const openDeliveryLocation = async (order) => {
@@ -235,6 +326,11 @@ const DriverHomeScreen = ({ navigation }) => {
         <Text style={styles.amountText}>
           Ganancia (100% del domicilio): {formatCOP(item.delivery_fee_cop)}
         </Text>
+        {item.business_prep_eta_at ? (
+          <Text style={styles.etaText}>
+            Llega al negocio en {getDriverBusinessTargetMinutes(item.business_prep_eta_at, now)} min o antes
+          </Text>
+        ) : null}
       </View>
       <AnimatedButton
         title="Aceptar"
@@ -252,6 +348,7 @@ const DriverHomeScreen = ({ navigation }) => {
       <HelpButton navigation={navigation} context="repartidor" orderId={activeOrder?.id} compact />
       <View style={styles.sessionActions}>
         <AnimatedButton title="Mi perfil" variant="secondary" onPress={() => navigation.navigate('DriverProfile')} />
+        <AnimatedButton title="Elogios y sugerencias" variant="secondary" onPress={() => navigation.navigate('DriverFeedback')} />
         <AnimatedButton title="Configuración" variant="secondary" onPress={() => navigation.navigate('Settings')} />
         <AnimatedButton title="Cerrar sesión" variant="secondary" onPress={handleSignOut} />
       </View>
@@ -301,10 +398,26 @@ const DriverHomeScreen = ({ navigation }) => {
 
             <Text style={styles.detailLabel}>Entregar a:</Text>
             <Text style={styles.detailValue}>{activeOrder.profiles?.full_name}</Text>
+            {blockState.blocked_by_me ? (
+              <Text style={styles.blockNotice}>Bloqueaste a este cliente; el chat directo está deshabilitado.</Text>
+            ) : blockState.blocked_by_other ? (
+              <Text style={styles.blockNotice}>Este cliente bloqueó la interacción directa contigo.</Text>
+            ) : null}
+            {blockState.blocked_by_other ? null : (
+              <AnimatedButton
+                title={blockState.blocked_by_other
+                  ? 'Bloqueo activo por el cliente'
+                  : blockState.blocked_by_me ? 'Desbloquear cliente' : 'Bloquear cliente'}
+                variant="secondary"
+                onPress={toggleClientBlock}
+                style={styles.blockButton}
+              />
+            )}
             <AnimatedButton
               title="Abrir chat con el cliente"
               variant="secondary"
               onPress={() => navigation.navigate('OrderChat', { orderId: activeOrder.id })}
+              disabled={blockState.blocked_by_me || blockState.blocked_by_other}
             />
             <Text style={styles.detailLabel}>Destino:</Text>
             <Text style={styles.detailValue}>{activeOrder.delivery_address}</Text>
@@ -322,8 +435,20 @@ const DriverHomeScreen = ({ navigation }) => {
             <Text style={styles.detailLabel}>
               Tu ganancia por domicilio: {formatCOP(activeOrder.delivery_fee_cop)}
             </Text>
-            <OrderStatusAnimation status={activeOrder.status} />
-            {activeOrder.status === 'repartidor_asignado' ? (
+            <OrderStatusAnimation
+              status={activeOrder.status}
+              driverAssignedToPreparing={activeOrder.status === 'preparando'}
+            />
+            {activeOrder.status === 'repartidor_asignado' && activeOrder.business_prep_eta_at ? (
+              <Text style={styles.etaText}>
+                Llega al negocio en {getDriverBusinessTargetMinutes(activeOrder.business_prep_eta_at, now)} min o antes
+              </Text>
+            ) : null}
+            {activeOrder.status === 'preparando' ? (
+              <Text style={styles.etaText}>
+                El negocio sigue preparando. Llega en {getDriverBusinessTargetMinutes(activeOrder.business_prep_eta_at, now)} min o antes.
+              </Text>
+            ) : activeOrder.status === 'repartidor_asignado' ? (
               <>
                 <Text style={styles.codeHint}>Solicita el código de recogida al negocio:</Text>
                 <TextInput
@@ -343,13 +468,40 @@ const DriverHomeScreen = ({ navigation }) => {
                 />
               </>
             ) : activeOrder.status === 'recogido' ? (
-              <AnimatedButton
-                title="Iniciar ruta al cliente"
-                onPress={startDelivery}
-                buttonStyle={[styles.completeBtn, { backgroundColor: theme.primary }]}
-                textStyle={styles.completeBtnText}
-              />
-            ) : (
+              <>
+                <Text style={styles.codeHint}>¿En cuántos minutos llegarás al cliente? (1–1440)</Text>
+                <TextInput
+                  accessibilityLabel="Minutos estimados para llegar al cliente"
+                  value={arrivalMinutes}
+                  onChangeText={(value) => setArrivalMinutes(value.replace(/\D/g, '').slice(0, 4))}
+                  keyboardType="number-pad"
+                  placeholder="Ej. 15"
+                  style={styles.codeInput}
+                  maxLength={4}
+                />
+                <AnimatedButton
+                  title="Iniciar ruta al cliente"
+                  onPress={startDelivery}
+                  buttonStyle={[styles.completeBtn, { backgroundColor: theme.primary }]}
+                  textStyle={styles.completeBtnText}
+                />
+                <Text style={styles.codeHint}>Si no puedes entregar después de recogerlo, registra el motivo:</Text>
+                <TextInput
+                  accessibilityLabel="Motivo de entrega no completada"
+                  value={deliveryFailureReason}
+                  onChangeText={(value) => setDeliveryFailureReason(value.slice(0, 500))}
+                  placeholder="Motivo de la incidencia"
+                  style={styles.codeInput}
+                  maxLength={500}
+                  multiline
+                />
+                <AnimatedButton
+                  title="Reportar pedido no entregado"
+                  variant="secondary"
+                  onPress={reportDeliveryFailure}
+                />
+              </>
+            ) : activeOrder.status === 'en_camino' ? (
               <>
                 <Text style={styles.codeHint}>Solicita al cliente el código de entrega:</Text>
                 <TextInput
@@ -367,7 +519,32 @@ const DriverHomeScreen = ({ navigation }) => {
                   buttonStyle={[styles.completeBtn, { backgroundColor: theme.primary }]}
                   textStyle={styles.completeBtnText}
                 />
+                <Text style={styles.codeHint}>Si no puedes entregar, registra el motivo para coordinar el retorno:</Text>
+                <TextInput
+                  accessibilityLabel="Motivo de entrega no completada"
+                  value={deliveryFailureReason}
+                  onChangeText={(value) => setDeliveryFailureReason(value.slice(0, 500))}
+                  placeholder="Motivo de la incidencia"
+                  style={styles.codeInput}
+                  maxLength={500}
+                  multiline
+                />
+                <AnimatedButton
+                  title="Reportar pedido no entregado"
+                  variant="secondary"
+                  onPress={reportDeliveryFailure}
+                />
               </>
+            ) : (
+              <View style={styles.incidentCard}>
+                <Text style={styles.incidentTitle}>Pedido no entregado</Text>
+                <Text style={styles.incidentText}>
+                  Motivo: {activeIncident?.reason || 'Incidencia registrada'}
+                </Text>
+                <Text style={styles.incidentText}>
+                  Regresa al negocio. El comercio debe confirmar la devolución antes de reasignar o cancelar el pedido.
+                </Text>
+              </View>
             )}
           </View>
         </View>
@@ -418,6 +595,12 @@ const styles = StyleSheet.create({
   },
   detailLabel: { fontSize: 14, color: '#757575', fontWeight: 'bold', marginTop: 10 },
   detailValue: { fontSize: 16, color: '#333', marginBottom: 10 },
+  etaText: { fontSize: 14, fontWeight: '700', color: '#1A237E', marginTop: 6 },
+  blockNotice: { fontSize: 13, color: '#8A3B12', marginVertical: 6 },
+  blockButton: { alignSelf: 'stretch', marginBottom: 8 },
+  incidentCard: { backgroundColor: '#FFF3E0', borderRadius: 10, padding: 12, marginTop: 12 },
+  incidentTitle: { color: '#7A4300', fontSize: 15, fontWeight: '700' },
+  incidentText: { color: '#5D4037', fontSize: 13, lineHeight: 18, marginTop: 6 },
   divider: { height: 1, backgroundColor: '#E0E0E0', marginVertical: 15 },
   completeBtn: {
     backgroundColor: '#2E7D32', padding: 18, borderRadius: 12,

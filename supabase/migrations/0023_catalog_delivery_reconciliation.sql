@@ -192,9 +192,9 @@ INSERT INTO public.order_verification_secrets (
 SELECT
   o.id,
   codes.pickup_code,
-  encode(digest(codes.pickup_code, 'sha256'), 'hex'),
+  encode(extensions.digest(codes.pickup_code, 'sha256'), 'hex'),
   codes.delivery_code,
-  encode(digest(codes.delivery_code, 'sha256'), 'hex')
+  encode(extensions.digest(codes.delivery_code, 'sha256'), 'hex')
 FROM public.orders o
 CROSS JOIN LATERAL (
   SELECT
@@ -487,8 +487,8 @@ BEGIN
   INSERT INTO public.order_verification_secrets (
     order_id, pickup_code, pickup_code_hash, delivery_code, delivery_code_hash
   ) VALUES (
-    v_order_id, v_pickup_code, encode(digest(v_pickup_code, 'sha256'), 'hex'),
-    v_delivery_code, encode(digest(v_delivery_code, 'sha256'), 'hex')
+    v_order_id, v_pickup_code, encode(extensions.digest(v_pickup_code, 'sha256'), 'hex'),
+    v_delivery_code, encode(extensions.digest(v_delivery_code, 'sha256'), 'hex')
   );
   INSERT INTO public.customer_delivery_preferences (
     profile_id, delivery_address, delivery_instructions, updated_at
@@ -650,7 +650,7 @@ BEGIN
   END IF;
 
   IF NOT COALESCE(p_code ~ '^[0-9]{6}$', FALSE)
-     OR v_expected_hash <> encode(digest(p_code, 'sha256'), 'hex') THEN
+     OR v_expected_hash <> encode(extensions.digest(p_code, 'sha256'), 'hex') THEN
     UPDATE public.order_code_verification_attempts
     SET failed_attempts = failed_attempts + 1,
         locked_until = CASE

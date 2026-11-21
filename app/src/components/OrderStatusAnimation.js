@@ -1,5 +1,5 @@
 import { AppText as Text } from './AppText.js';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, View } from 'react-native';
 
 const STATUS_CONTENT = {
@@ -10,29 +10,35 @@ const STATUS_CONTENT = {
   repartidor_asignado: { icon: '🛵', label: 'El repartidor va hacia el negocio para recogerlo' },
   recogido: { icon: '📦', label: 'El repartidor recogió tu pedido' },
   en_camino: { icon: '🛵', label: 'Tu repartidor va en camino' },
+  no_entregado: { icon: '⚠️', label: 'No se pudo entregar. El pedido debe regresar al negocio para su resolución.' },
   entregado: { icon: '🎉', label: 'Pedido entregado. ¡Buen provecho!' },
   cancelado: { icon: '⚠️', label: 'Este pedido fue cancelado' },
 };
 
-export default function OrderStatusAnimation({ status }) {
-  const progress = useRef(new Animated.Value(0)).current;
-  const content = STATUS_CONTENT[status] || STATUS_CONTENT.pendiente;
+export default function OrderStatusAnimation({ status, driverAssignedToPreparing = false }) {
+  const [progress] = useState(() => new Animated.Value(0));
+  const headingToBusiness = status === 'repartidor_asignado'
+    || (status === 'preparando' && driverAssignedToPreparing);
+  const content = headingToBusiness
+    ? { icon: '🛵', label: 'El repartidor va hacia el negocio mientras se prepara el pedido' }
+    : STATUS_CONTENT[status] || STATUS_CONTENT.pendiente;
 
   useEffect(() => {
     progress.setValue(0);
     if (status !== 'preparando' && status !== 'en_camino' && status !== 'repartidor_asignado') return undefined;
+    if (status === 'preparando' && !driverAssignedToPreparing) return undefined;
 
     const animation = Animated.loop(
       Animated.sequence([
         Animated.timing(progress, {
           toValue: 1,
-          duration: status === 'en_camino' || status === 'repartidor_asignado' ? 1600 : 650,
+          duration: status === 'en_camino' || headingToBusiness ? 1600 : 650,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(progress, {
           toValue: 0,
-          duration: status === 'en_camino' || status === 'repartidor_asignado' ? 1600 : 650,
+          duration: status === 'en_camino' || headingToBusiness ? 1600 : 650,
           easing: Easing.inOut(Easing.ease),
           useNativeDriver: Platform.OS !== 'web',
         }),
@@ -40,9 +46,9 @@ export default function OrderStatusAnimation({ status }) {
     );
     animation.start();
     return () => animation.stop();
-  }, [progress, status]);
+  }, [driverAssignedToPreparing, headingToBusiness, progress, status]);
 
-  const animatedStyle = status === 'en_camino' || status === 'repartidor_asignado'
+  const animatedStyle = status === 'en_camino' || headingToBusiness
     ? {
       transform: [{
         translateX: progress.interpolate({
@@ -64,11 +70,11 @@ export default function OrderStatusAnimation({ status }) {
     <View style={styles.container} accessibilityLiveRegion="polite">
       <Animated.Text style={[styles.icon, animatedStyle]}>{content.icon}</Animated.Text>
       <Text style={styles.label}>{content.label}</Text>
-      {status === 'repartidor_asignado' || status === 'en_camino' ? (
+      {headingToBusiness || status === 'en_camino' ? (
         <View style={styles.route}>
           <View style={styles.routeLabels}>
-            <Text style={styles.routeEndpoint}>{status === 'repartidor_asignado' ? 'Repartidor' : 'Negocio'}</Text>
-            <Text style={styles.routeEndpoint}>{status === 'repartidor_asignado' ? 'Negocio' : 'Casa'}</Text>
+            <Text style={styles.routeEndpoint}>{headingToBusiness ? 'Repartidor' : 'Negocio'}</Text>
+            <Text style={styles.routeEndpoint}>{headingToBusiness ? 'Negocio' : 'Casa'}</Text>
           </View>
           <View style={styles.routeTrack}>
             <View style={styles.routeLine} />

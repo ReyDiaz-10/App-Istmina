@@ -6,6 +6,7 @@ import { useAppTheme } from '../hooks/useAppTheme';
 import { formatCOP } from '../utils/formatters';
 import AnimatedButton from './AnimatedButton';
 import PayoutAccountCard from './PayoutAccountCard';
+import DriverWithdrawalExceptionCard from './DriverWithdrawalExceptionCard';
 
 export default function DriverPayoutWalletCard({ locale }) {
   const { colors } = useAppTheme();
@@ -22,12 +23,15 @@ export default function DriverPayoutWalletCard({ locale }) {
     setRefreshing(false);
   }, []);
   useEffect(() => {
-    load();
+    const initialLoad = setTimeout(() => { void load(); }, 0);
     const channel = supabase.channel('driver-payout-summary')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_withdrawals' }, () => load(true))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payout_transactions' }, () => load(true))
       .subscribe();
-    return () => supabase.removeChannel(channel);
+    return () => {
+      clearTimeout(initialLoad);
+      supabase.removeChannel(channel);
+    };
   }, [load]);
   if (loading) return <ActivityIndicator style={{ margin: 20 }} color={colors.primary} />;
   if (!summary) return <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}><Text style={[styles.copy, { color: colors.muted }]}>{loadError || 'No se pudo cargar el resumen de retiros.'}</Text><AnimatedButton title="Reintentar" onPress={() => load()} /></View>;
@@ -55,6 +59,11 @@ export default function DriverPayoutWalletCard({ locale }) {
         </View>
       )) : <Text style={[styles.copy, { color: colors.muted }]}>Aún no hay retiros programados.</Text>}
       <PayoutAccountCard account={summary?.payout_account} locale={locale} onSaved={() => load(true)} />
+      <DriverWithdrawalExceptionCard
+        withdrawals={[...(scheduled || []), ...(history || [])]}
+        openExceptions={summary?.open_exceptions || []}
+        onSubmitted={() => load(true)}
+      />
       <Text style={[styles.section, { color: colors.text }]}>Histórico de retiros</Text>
       {history.length ? history.map((item) => (
         <View key={item.id} style={[styles.row, { borderColor: colors.border }]}>
