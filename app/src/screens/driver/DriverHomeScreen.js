@@ -41,6 +41,8 @@ const DriverHomeScreen = ({ navigation }) => {
   const [activeIncident, setActiveIncident] = useState(null);
   const [blockState, setBlockState] = useState({ blocked_by_me: false, blocked_by_other: false });
   const [loading, setLoading] = useState(true);
+  const [updatingAvailability, setUpdatingAvailability] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [now, setNow] = useState(0);
 
   // --- LÓGICA DE DATOS ---
@@ -132,19 +134,34 @@ const DriverHomeScreen = ({ navigation }) => {
     const initialLoad = setTimeout(() => {
       void initializeDriver();
     }, 0);
+    if (!profile?.id) {
+      return () => clearTimeout(initialLoad);
+    }
     const subscription = supabase
       .channel('driver-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
         fetchAvailableOrders();
         fetchActiveOrder();
       })
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'drivers', filter: `profile_id=eq.${profile.id}` },
+        ({ new: updatedDriver }) => {
+          setDriverData(updatedDriver);
+          if (updatedDriver.verification_status === 'aprobado' && updatedDriver.is_available) {
+            fetchAvailableOrders(updatedDriver);
+          } else {
+            setAvailableOrders([]);
+          }
+        },
+      )
       .subscribe();
 
     return () => {
       clearTimeout(initialLoad);
       supabase.removeChannel(subscription);
     };
-  }, [fetchActiveOrder, fetchAvailableOrders, initializeDriver]);
+  }, [fetchActiveOrder, fetchAvailableOrders, initializeDriver, profile?.id]);
 
   useEffect(() => {
     const initialClock = setTimeout(() => setNow(Date.now()), 0);
@@ -161,18 +178,24 @@ const DriverHomeScreen = ({ navigation }) => {
       return;
     }
 
+    setUpdatingAvailability(true);
     try {
-      const { error } = await supabase
+      const { data: updatedDriver, error } = await supabase
         .from('drivers')
         .update({ is_available: value })
-        .eq('profile_id', profile.id);
+        .eq('profile_id', profile.id)
+        .select('id, profile_id, is_available, verification_status')
+        .single();
 
       if (error) throw error;
-      setDriverData({ ...driverData, is_available: value });
+      setDriverData((current) => ({ ...current, ...updatedDriver }));
 
-      if (!value) setAvailableOrders([]); // Limpiar lista si se pone offline
+      if (value) await fetchAvailableOrders({ ...driverData, ...updatedDriver });
+      else setAvailableOrders([]);
     } catch (error) {
       Alert.alert('Error', error.message);
+    } finally {
+      setUpdatingAvailability(false);
     }
   };
 
@@ -306,14 +329,16 @@ const DriverHomeScreen = ({ navigation }) => {
   };
 
   const handleSignOut = async () => {
-    Alert.alert('Cerrar sesión', '¿Quieres cerrar la sesión?', [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Cerrar sesión', style: 'destructive', onPress: async () => {
-        const result = await signOut();
-        if (result.success) navigation.reset({ index: 0, routes: [{ name: 'ClientHome' }] });
-        else Alert.alert('Error', result.error || 'No se pudo cerrar la sesión.');
-      } },
-    ]);
+    setSigningOut(true);
+    try {
+      const result = await signOut();
+      if (!result.success) throw new Error(result.error || 'No se pudo cerrar la sesión.');
+      navigation.reset({ index: 0, routes: [{ name: 'ClientHome' }] });
+    } catch (error) {
+      Alert.alert('No se pudo cerrar la sesión', error.message || 'Intenta nuevamente.');
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   // --- COMPONENTES DE INTERFAZ ---
@@ -350,25 +375,51 @@ const DriverHomeScreen = ({ navigation }) => {
         <AnimatedButton title="Mi perfil" variant="secondary" onPress={() => navigation.navigate('DriverProfile')} />
         <AnimatedButton title="Elogios y sugerencias" variant="secondary" onPress={() => navigation.navigate('DriverFeedback')} />
         <AnimatedButton title="Configuración" variant="secondary" onPress={() => navigation.navigate('Settings')} />
-        <AnimatedButton title="Cerrar sesión" variant="secondary" onPress={handleSignOut} />
+        <AnimatedButton
+          title={signingOut ? 'Cerrando sesión...' : 'Cerrar sesión'}
+          variant="secondary"
+          onPress={handleSignOut}
+          disabled={signingOut}
+        />
       </View>
       {/* HEADER DE DISPONIBILIDAD */}
       <View style={styles.header}>
-        <View>
+        <View style={styles.availabilityInfo}>
           <Text style={[styles.welcomeText, { color: colors.text }]}>Hola, {profile?.full_name || 'Repartidor'}</Text>
-          <Text style={[styles.statusText, { color: colors.muted }]}>
-            Estado: {driverData?.verification_status !== 'aprobado'
-              ? 'Pendiente de aprobación'
-              : driverData?.is_available ? 'Disponible' : 'Offline'}
-          </Text>
+          <Text style={[styles.statusCaption, { color: colors.muted }]}>Estado de disponibilidad</Text>
+          <View style={[
+            styles.statusBadge,
+            driverData?.verification_status !== 'aprobado'
+              ? styles.pendingBadge
+              : driverData?.is_available ? styles.onlineBadge : styles.offlineBadge,
+          ]}>
+            <Text style={[
+              styles.statusText,
+              driverData?.verification_status !== 'aprobado'
+                ? styles.pendingStatus
+                : driverData?.is_available ? styles.onlineStatus : styles.offlineStatus,
+            ]}>
+              {driverData?.verification_status !== 'aprobado'
+                ? '⏳ Pendiente de aprobación'
+                : driverData?.is_available ? '● EN LÍNEA · Disponible' : '○ FUERA DE LÍNEA'}
+            </Text>
+          </View>
         </View>
-        <Switch
-          value={driverData?.verification_status === 'aprobado' && driverData?.is_available}
-          onValueChange={toggleAvailability}
-          disabled={driverData?.verification_status !== 'aprobado'}
-          trackColor={{ false: '#767577', true: '#1A237E' }}
-          thumbColor={'#fff'}
-        />
+        <View style={styles.availabilityControl}>
+          <Text style={[styles.switchLabel, { color: colors.text }]}>
+            {driverData?.is_available ? 'Desconectarme' : 'Ponerme en línea'}
+          </Text>
+          <Switch
+            accessibilityLabel={driverData?.is_available ? 'Desconectarme' : 'Ponerme en línea'}
+            accessibilityState={{ checked: Boolean(driverData?.is_available), disabled: updatingAvailability || driverData?.verification_status !== 'aprobado' }}
+            value={driverData?.verification_status === 'aprobado' && driverData?.is_available}
+            onValueChange={toggleAvailability}
+            disabled={updatingAvailability || driverData?.verification_status !== 'aprobado'}
+            trackColor={{ false: '#667085', true: '#146C43' }}
+            thumbColor="#FFFFFF"
+            ios_backgroundColor="#667085"
+          />
+        </View>
       </View>
 
       {driverData?.verification_status === 'aprobado' ? <DriverPayoutWalletCard locale={locale} /> : null}
@@ -573,18 +624,30 @@ const DriverHomeScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F7FA' },
-  sessionActions: { flexDirection: 'row', justifyContent: 'space-between', marginHorizontal: 18, gap: 8 },
+  sessionActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginHorizontal: 18, gap: 8 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     backgroundColor: '#fff',
-    elevation: 2
+    elevation: 2,
   },
+  availabilityInfo: { flex: 1, paddingRight: 12 },
+  availabilityControl: { alignItems: 'center', justifyContent: 'center', minWidth: 112, padding: 8, borderRadius: 12, borderWidth: 1, borderColor: '#D0D5DD', backgroundColor: '#FFFFFF' },
+  switchLabel: { fontSize: 13, fontWeight: '700', textAlign: 'center', marginBottom: 4 },
   welcomeText: { fontSize: 20, fontWeight: 'bold', color: '#1A237E' },
-  statusText: { fontSize: 14, color: '#757575' },
+  statusCaption: { fontSize: 13, fontWeight: '600', marginTop: 8, marginBottom: 5 },
+  statusBadge: { alignSelf: 'flex-start', borderRadius: 999, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6 },
+  onlineBadge: { backgroundColor: '#E8F5E9', borderColor: '#2E7D32' },
+  offlineBadge: { backgroundColor: '#F2F4F7', borderColor: '#667085' },
+  pendingBadge: { backgroundColor: '#FFF4E5', borderColor: '#9A6700' },
+  statusText: { fontSize: 14, fontWeight: '800' },
+  onlineStatus: { color: '#14532D' },
+  offlineStatus: { color: '#344054' },
+  pendingStatus: { color: '#7A4300' },
 
   // Active Order Panel
   activeOrderPanel: { padding: 20 },

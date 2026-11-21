@@ -101,6 +101,24 @@ const BusinessHomeScreen = ({ navigation }) => {
           });
         },
       )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'business_verifications', filter: `business_id=eq.${business.id}` },
+        async ({ new: verificationData }) => {
+          setVerificationStatus(verificationData.verification_status);
+          setVerification(verificationData);
+          const { data: updatedBusiness, error } = await supabase
+            .from('businesses')
+            .select('status')
+            .eq('id', business.id)
+            .single();
+          if (error) {
+            console.error('No se pudo actualizar el estado del negocio tras la revisión:', error.message);
+            return;
+          }
+          setBusiness((current) => ({ ...current, ...updatedBusiness }));
+        },
+      )
       .subscribe((status) => {
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.error(`Realtime business finance subscription failed: ${status}`);

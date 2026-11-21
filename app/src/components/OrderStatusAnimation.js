@@ -8,8 +8,8 @@ const STATUS_CONTENT = {
   preparando: { icon: '👩‍🍳', label: 'El negocio está preparando tu pedido' },
   listo_para_repartidor: { icon: '📦', label: 'Tu pedido está listo para recoger' },
   repartidor_asignado: { icon: '🛵', label: 'El repartidor va hacia el negocio para recogerlo' },
-  recogido: { icon: '📦', label: 'El repartidor recogió tu pedido' },
-  en_camino: { icon: '🛵', label: 'Tu repartidor va en camino' },
+  recogido: { icon: '🛵', label: 'El repartidor recogió tu pedido y se dirige a tu domicilio' },
+  en_camino: { icon: '🛵', label: 'Tu repartidor va en camino a tu domicilio' },
   no_entregado: { icon: '⚠️', label: 'No se pudo entregar. El pedido debe regresar al negocio para su resolución.' },
   entregado: { icon: '🎉', label: 'Pedido entregado. ¡Buen provecho!' },
   cancelado: { icon: '⚠️', label: 'Este pedido fue cancelado' },
@@ -17,78 +17,71 @@ const STATUS_CONTENT = {
 
 export default function OrderStatusAnimation({ status, driverAssignedToPreparing = false }) {
   const [progress] = useState(() => new Animated.Value(0));
+  const [trackWidth, setTrackWidth] = useState(0);
   const headingToBusiness = status === 'repartidor_asignado'
     || (status === 'preparando' && driverAssignedToPreparing);
+  const headingToHome = status === 'recogido' || status === 'en_camino';
+  const isOnRoute = headingToBusiness || headingToHome;
   const content = headingToBusiness
     ? { icon: '🛵', label: 'El repartidor va hacia el negocio mientras se prepara el pedido' }
-    : STATUS_CONTENT[status] || STATUS_CONTENT.pendiente;
+    : headingToHome && status === 'recogido'
+      ? STATUS_CONTENT.recogido
+      : STATUS_CONTENT[status] || STATUS_CONTENT.pendiente;
 
   useEffect(() => {
     progress.setValue(0);
-    if (status !== 'preparando' && status !== 'en_camino' && status !== 'repartidor_asignado') return undefined;
-    if (status === 'preparando' && !driverAssignedToPreparing) return undefined;
+    if (!isOnRoute) return undefined;
 
-    const animation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(progress, {
-          toValue: 1,
-          duration: status === 'en_camino' || headingToBusiness ? 1600 : 650,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-        Animated.timing(progress, {
-          toValue: 0,
-          duration: status === 'en_camino' || headingToBusiness ? 1600 : 650,
-          easing: Easing.inOut(Easing.ease),
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-      ]),
-    );
+    const animation = Animated.timing(progress, {
+      toValue: 1,
+      duration: 3600,
+      easing: Easing.inOut(Easing.ease),
+      useNativeDriver: Platform.OS !== 'web',
+    });
     animation.start();
     return () => animation.stop();
-  }, [driverAssignedToPreparing, headingToBusiness, progress, status]);
+  }, [headingToBusiness, headingToHome, isOnRoute, progress]);
 
-  const animatedStyle = status === 'en_camino' || headingToBusiness
-    ? {
-      transform: [{
-        translateX: progress.interpolate({
-          inputRange: [0, 1],
-          outputRange: [-12, 12],
-        }),
-      }],
-    }
-    : {
-      transform: [{
-        rotate: progress.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['-8deg', '8deg'],
-        }),
-      }],
-    };
+  const iconAnimationStyle = {
+    transform: [{
+      rotate: progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [isOnRoute ? '-4deg' : '-8deg', isOnRoute ? '4deg' : '8deg'],
+      }),
+    }],
+  };
+  const courierAnimationStyle = {
+    transform: [{
+      translateX: progress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [0, Math.max(0, trackWidth - 26)],
+      }),
+    }],
+  };
 
   return (
     <View style={styles.container} accessibilityLiveRegion="polite">
-      <Animated.Text style={[styles.icon, animatedStyle]}>{content.icon}</Animated.Text>
+      <Animated.Text style={[styles.icon, iconAnimationStyle]}>{content.icon}</Animated.Text>
       <Text style={styles.label}>{content.label}</Text>
-      {headingToBusiness || status === 'en_camino' ? (
+      {isOnRoute ? (
         <View style={styles.route}>
           <View style={styles.routeLabels}>
             <Text style={styles.routeEndpoint}>{headingToBusiness ? 'Repartidor' : 'Negocio'}</Text>
-            <Text style={styles.routeEndpoint}>{headingToBusiness ? 'Negocio' : 'Casa'}</Text>
+            <Text style={styles.routeEndpoint}>
+              {headingToBusiness ? '🏪 Negocio' : '🏠 Casa'}
+            </Text>
           </View>
-          <View style={styles.routeTrack}>
+          <View
+            style={styles.routeTrack}
+            onLayout={(event) => setTrackWidth(event.nativeEvent.layout.width)}
+          >
             <View style={styles.routeLine} />
             <Animated.Text
+              accessibilityElementsHidden
+              importantForAccessibility="no"
               style={[
                 styles.routeCourier,
-                {
-                  transform: [{
-                    translateX: progress.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [0, 154],
-                    }),
-                  }],
-                },
+                courierAnimationStyle,
               ]}
             >🛵</Animated.Text>
           </View>
@@ -112,10 +105,10 @@ const styles = StyleSheet.create({
   },
   icon: { fontSize: 34, marginRight: 12 },
   label: { flex: 1, color: '#333333', fontSize: 15, fontWeight: '600' },
-  route: { flexBasis: '100%', marginLeft: 46, marginTop: 6, marginRight: 8 },
+  route: { flexBasis: '100%', marginLeft: 46, marginTop: 8, marginRight: 8 },
   routeLabels: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 2 },
-  routeEndpoint: { color: '#687078', fontSize: 10, fontWeight: '700' },
-  routeTrack: { height: 24, justifyContent: 'center' },
-  routeLine: { height: 3, backgroundColor: '#D5C28A', borderRadius: 2 },
-  routeCourier: { position: 'absolute', left: 0, top: -4, fontSize: 22 },
+  routeEndpoint: { color: '#475467', fontSize: 12, fontWeight: '800' },
+  routeTrack: { height: 30, justifyContent: 'center' },
+  routeLine: { height: 4, backgroundColor: '#C6A64B', borderRadius: 2 },
+  routeCourier: { position: 'absolute', left: 0, top: -3, fontSize: 24 },
 });

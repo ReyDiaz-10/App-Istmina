@@ -345,7 +345,10 @@ const ClientOrdersScreen = ({ navigation }) => {
         </Text>
         {item.delivery_mode === 'pickup' ? <Text style={[styles.etaText, { color: colors.primary, fontWeight: '800' }]}>RETIRO EN TIENDA · No se asignará repartidor ni se cobrará domicilio.</Text> : null}
         {pickupClaimCodes[item.id] ? <View style={styles.pickupCodeCard}><Text style={styles.pickupCodeLabel}>Código para reclamar el pedido</Text><Text selectable style={styles.pickupCode}>{pickupClaimCodes[item.id]}</Text><Text style={styles.etaText}>Muéstralo en el negocio al recoger.</Text></View> : null}
-        <OrderStatusAnimation status={item.status} />
+        <OrderStatusAnimation
+          status={item.status}
+          driverAssignedToPreparing={item.status === 'preparando' && Boolean(item.driver_id)}
+        />
         {item.status === 'entregado' && item.driver_id ? (
           <AnimatedButton
             title="Calificar o comentar la entrega"
