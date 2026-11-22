@@ -57,7 +57,7 @@ export default function AdminDashboardScreen({ navigation }) {
         supabase.rpc('admin_dashboard_summary'),
         supabase.from('support_tickets').select('*, profiles(full_name, role)').order('created_at', { ascending: false }).limit(100),
         supabase.from('business_verifications')
-          .select('*, businesses!inner(id, store_name, store_image_url, profile_id, address, slogan, profiles(full_name, phone))')
+          .select('*, businesses!inner(id, store_name, store_image_url, profile_id, address, slogan)')
           .eq('verification_status', 'pendiente')
           .order('created_at', { ascending: true }),
         supabase.from('driver_verifications')
@@ -71,6 +71,26 @@ export default function AdminDashboardScreen({ navigation }) {
       }
       const metrics = summary.data || {};
       const ticketRows = tickets.data || [];
+      const pendingBusinessRows = pendingBusinesses.data || [];
+      const businessProfileIds = [...new Set(
+        pendingBusinessRows.map((item) => item.businesses?.profile_id).filter(Boolean),
+      )];
+      const businessProfilesResult = businessProfileIds.length
+        ? await supabase.from('profiles').select('id, full_name, phone').in('id', businessProfileIds)
+        : { data: [], error: null };
+      if (businessProfilesResult.error) throw businessProfilesResult.error;
+      const businessProfilesById = new Map(
+        (businessProfilesResult.data || []).map((item) => [item.id, item]),
+      );
+      const businessRows = pendingBusinessRows.map((item) => ({
+        ...item,
+        businesses: item.businesses
+          ? {
+            ...item.businesses,
+            profiles: businessProfilesById.get(item.businesses.profile_id) || null,
+          }
+          : null,
+      }));
       const driverRows = await Promise.all((pendingDrivers.data || []).map(async (item) => {
         const driverProfile = item.drivers?.profiles;
         const resolvePhoto = async (label, resolver, path) => {
@@ -108,7 +128,7 @@ export default function AdminDashboardScreen({ navigation }) {
         topClients: metrics.top_clients || [],
         tickets: ticketRows,
         feedback: metrics.feedback || 0,
-        pendingBusinesses: pendingBusinesses.data || [],
+        pendingBusinesses: businessRows,
         pendingDrivers: driverRows,
         operational: operational.data || { active_businesses: 0, drivers: 0, orders_by_area: [] },
       });
