@@ -107,7 +107,7 @@ const BannerUploader = ({ businessId, subscriptionActive, onUpgrade }) => {
         <Text style={[styles.upsellText, { color: colors.text }]}>
           Con IstmiYa Pro puedes publicar hasta 2 banners publicitarios.
         </Text>
-        <AnimatedButton title="Activar Pro por $35.000/mes" onPress={onUpgrade} />
+        <AnimatedButton title="Activar Pro por $50.000/mes" onPress={onUpgrade} />
       </View>
     );
   }

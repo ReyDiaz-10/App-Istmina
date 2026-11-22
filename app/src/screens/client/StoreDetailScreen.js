@@ -18,6 +18,33 @@ import { useAppTheme } from '../../hooks/useAppTheme';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { formatCOP } from '../../utils/formatters';
 
+const getPromotion = (product) => Array.isArray(product?.product_promotions)
+  ? product.product_promotions[0] || null
+  : product?.product_promotions || null;
+
+const promotionIsLive = (promotion) => {
+  if (!promotion?.is_active) return false;
+  const now = new Date();
+  const dateParts = new Intl.DateTimeFormat('en', {
+    timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now).reduce((values, part) => ({ ...values, [part.type]: part.value }), {});
+  const date = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  if (date < promotion.start_date || date > promotion.end_date) return false;
+  if (promotion.all_day) return true;
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).format(now);
+  return time >= String(promotion.start_time).slice(0, 5)
+    && time < String(promotion.end_time).slice(0, 5);
+};
+
+const getCurrentProductPrice = (product) => {
+  const promotion = getPromotion(product);
+  return promotionIsLive(promotion)
+    ? Math.round(Number(product.price) * (100 - Number(promotion.discount_percent)) / 100)
+    : Number(product.price);
+};
+
 const StoreDetailScreen = ({ route, navigation }) => {
   const { businessId: selectedBusinessId, storeName } = route.params || {};
   const [products, setProducts] = useState([]);
@@ -38,7 +65,7 @@ const StoreDetailScreen = ({ route, navigation }) => {
       try {
         const { data, error } = await supabase
           .from('products')
-          .select('*, product_options(*)')
+          .select('*, product_options(*), product_promotions(*)')
           .eq('business_id', selectedBusinessId);
         if (error) throw error;
         if (active) setProducts(data || []);
@@ -55,6 +82,11 @@ const StoreDetailScreen = ({ route, navigation }) => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'products', filter: `business_id=eq.${selectedBusinessId}` },
+        fetchProducts,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'product_promotions', filter: `business_id=eq.${selectedBusinessId}` },
         fetchProducts,
       )
       .subscribe((status) => {
@@ -114,7 +146,7 @@ const StoreDetailScreen = ({ route, navigation }) => {
       name: options.length
         ? `${item.name} · ${options.map((option) => option.name).join(', ')}`
         : item.name,
-      price: Number(item.price) + options.reduce((total, option) => total + Number(option.price_delta || 0), 0),
+      price: getCurrentProductPrice(item) + options.reduce((total, option) => total + Number(option.price_delta || 0), 0),
       businessId: item.business_id,
       optionIds,
       optionNames: options.map((option) => `${option.option_group}: ${option.name}`),
@@ -155,6 +187,9 @@ const StoreDetailScreen = ({ route, navigation }) => {
 
   const renderProduct = ({ item }) => {
     const available = isProductAvailable(item);
+    const promotion = getPromotion(item);
+    const hasLivePromotion = promotionIsLive(promotion);
+    const currentPrice = getCurrentProductPrice(item);
     return (
       <View style={[styles.productCard, { backgroundColor: colors.surface }]}>
         <View style={styles.productInfo}>
@@ -168,7 +203,13 @@ const StoreDetailScreen = ({ route, navigation }) => {
           <Text style={[styles.productDesc, { color: available ? colors.primary : '#B3261E', fontWeight: '700' }]}>
             {available ? 'Disponible' : 'Agotado'}
           </Text>
-          <Text style={[styles.productPrice, { color: theme.primary }]}>{formatCOP(item.price, locale)}</Text>
+          {hasLivePromotion ? (
+            <View style={styles.promotionPriceRow}>
+              <Text style={styles.oldPrice}>{formatCOP(item.price, locale)}</Text>
+              <Text style={styles.promotionPrice}>{formatCOP(currentPrice, locale)}</Text>
+              <Text style={styles.discountBadge}>-{Number(promotion.discount_percent)}%</Text>
+            </View>
+          ) : <Text style={[styles.productPrice, { color: theme.primary }]}>{formatCOP(item.price, locale)}</Text>}
         </View>
         {available ? (
           <AnimatedButton
@@ -318,6 +359,10 @@ const styles = StyleSheet.create({
   productName: { fontSize: 16, fontWeight: 'bold', color: '#1A237E' },
   productDesc: { fontSize: 14, color: '#757575', marginVertical: 4 },
   productPrice: { fontSize: 16, fontWeight: 'bold' },
+  promotionPriceRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 7, marginTop: 3 },
+  oldPrice: { color: '#737373', fontSize: 13, textDecorationLine: 'line-through' },
+  promotionPrice: { color: '#D84315', fontSize: 19, fontWeight: '900' },
+  discountBadge: { color: '#FFFFFF', backgroundColor: '#D84315', borderRadius: 8, overflow: 'hidden', paddingHorizontal: 6, paddingVertical: 2, fontSize: 11, fontWeight: '800' },
   addButton: { alignSelf: 'center' },
   unavailableActions: { alignItems: 'flex-end', gap: 6 },
   addButtonSurface: { width: 42, height: 42, minHeight: 42, borderRadius: 21, padding: 0 },

@@ -126,13 +126,16 @@ serve(async (request) => {
         ? Deno.env.get("WOMPI_WALLET_TOPUP_AMOUNT_COP")
         : Deno.env.get("WOMPI_SUBSCRIPTION_AMOUNT_COP");
       const amountCop = purpose === "subscription"
-        ? Number(amountEnv || 35000)
-        : amountEnv
-          ? Number(amountEnv)
-          : 50000;
+        ? Number(amountEnv || 50000)
+        : body.amountCop !== undefined
+          ? Number(body.amountCop)
+          : Number(amountEnv || 20000);
 
       if (!Number.isSafeInteger(amountCop) || amountCop <= 0) {
         return jsonResponse({ error: "Configured payment amount is invalid" }, 503);
+      }
+      if (purpose === "wallet" && amountCop < 20000) {
+        return jsonResponse({ error: "Wallet top-ups must be at least 20000 COP" }, 400);
       }
 
       amountInCents = amountCop * 100;

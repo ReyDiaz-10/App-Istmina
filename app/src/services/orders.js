@@ -80,9 +80,9 @@ export async function createPickupOrder({ businessId, items, idempotencyKey }) {
   return data;
 }
 
-export async function createBusinessPaymentLink(purpose) {
+export async function createBusinessPaymentLink(purpose, amountCop) {
   const { data, error } = await supabase.functions.invoke('create-wompi-payment', {
-    body: { purpose },
+    body: { purpose, ...(purpose === 'wallet' && amountCop !== undefined ? { amountCop } : {}) },
   });
 
   if (error) throw error;

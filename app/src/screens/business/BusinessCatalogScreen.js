@@ -40,6 +40,27 @@ const EMPTY_OPTION = {
   is_required: false,
 };
 
+const todayInBogota = () => {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date()).reduce((values, part) => ({ ...values, [part.type]: part.value }), {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+};
+
+const getPromotion = (product) => Array.isArray(product?.product_promotions)
+  ? product.product_promotions[0] || null
+  : product?.product_promotions || null;
+
+const formatPromotionRange = (promotion) => {
+  if (!promotion) return '';
+  const dates = promotion.start_date === promotion.end_date
+    ? promotion.start_date
+    : `${promotion.start_date} al ${promotion.end_date}`;
+  return promotion.all_day
+    ? `${dates} · todo el día`
+    : `${dates} · ${String(promotion.start_time).slice(0, 5)}–${String(promotion.end_time).slice(0, 5)}`;
+};
+
 export default function BusinessCatalogScreen() {
   const { colors } = useAppTheme();
   const profile = useAuthStore((state) => state.profile);
@@ -56,13 +77,16 @@ export default function BusinessCatalogScreen() {
   const [optionProduct, setOptionProduct] = useState(null);
   const [productForm, setProductForm] = useState(EMPTY_PRODUCT);
   const [optionForm, setOptionForm] = useState(EMPTY_OPTION);
+  const [promotionModal, setPromotionModal] = useState(false);
+  const [promotionProduct, setPromotionProduct] = useState(null);
+  const [promotionForm, setPromotionForm] = useState(null);
 
   const loadProducts = useCallback(async (id) => {
     if (!id) return;
     const [productsResult, metricsResult, requestsResult] = await Promise.all([
       supabase
         .from('products')
-        .select('*, product_options(*)')
+        .select('*, product_options(*), product_promotions(*)')
         .eq('business_id', id)
         .order('name'),
       supabase.rpc('business_product_order_metrics', { p_business_id: id }),
@@ -120,6 +144,11 @@ export default function BusinessCatalogScreen() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'products', filter: `business_id=eq.${businessId}` },
+        () => loadProducts(businessId),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'product_promotions', filter: `business_id=eq.${businessId}` },
         () => loadProducts(businessId),
       )
       .subscribe((status) => {
@@ -331,6 +360,61 @@ export default function BusinessCatalogScreen() {
     ]);
   };
 
+  const openPromotionEditor = (product) => {
+    const current = getPromotion(product);
+    setPromotionProduct(product);
+    setPromotionForm({
+      discountPercent: String(current?.discount_percent ?? ''),
+      startDate: current?.start_date || todayInBogota(),
+      endDate: current?.end_date || todayInBogota(),
+      allDay: current?.all_day !== false,
+      startTime: String(current?.start_time || '08:00').slice(0, 5),
+      endTime: String(current?.end_time || '21:00').slice(0, 5),
+      isActive: current?.is_active !== false,
+    });
+    setPromotionModal(true);
+  };
+
+  const savePromotion = async () => {
+    const percent = Number(promotionForm?.discountPercent);
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (!Number.isFinite(percent) || percent <= 0 || percent >= 100) {
+      Alert.alert('Descuento inválido', 'Ingresa un porcentaje mayor que 0 y menor que 100.');
+      return;
+    }
+    if (!datePattern.test(promotionForm.startDate) || !datePattern.test(promotionForm.endDate)
+      || promotionForm.endDate < promotionForm.startDate) {
+      Alert.alert('Fechas inválidas', 'Usa el formato AAAA-MM-DD y verifica que la fecha final no sea anterior.');
+      return;
+    }
+    if (!promotionForm.allDay && (!timePattern.test(promotionForm.startTime)
+      || !timePattern.test(promotionForm.endTime) || promotionForm.endTime <= promotionForm.startTime)) {
+      Alert.alert('Horario inválido', 'Usa horas HH:MM y define una hora final posterior a la inicial.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase.rpc('business_set_product_promotion', {
+        p_product_id: promotionProduct.id,
+        p_discount_percent: percent,
+        p_start_date: promotionForm.startDate,
+        p_end_date: promotionForm.endDate,
+        p_all_day: promotionForm.allDay,
+        p_start_time: promotionForm.allDay ? null : promotionForm.startTime,
+        p_end_time: promotionForm.allDay ? null : promotionForm.endTime,
+        p_is_active: promotionForm.isActive,
+      });
+      if (error) throw error;
+      await loadProducts(businessId);
+      setPromotionModal(false);
+    } catch (error) {
+      Alert.alert('No se pudo guardar la promoción', error.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const pickProductImage = async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -400,6 +484,10 @@ export default function BusinessCatalogScreen() {
         contentContainerStyle={styles.list}
         renderItem={({ item }) => {
           const options = item.product_options || [];
+          const promotion = getPromotion(item);
+          const previewPrice = promotion
+            ? Math.round(Number(item.price) * (100 - Number(promotion.discount_percent)) / 100)
+            : null;
           const metrics = productMetrics[item.id] || { orderCount: 0, requestedUnits: 0 };
           const effectivelyAvailable = item.is_available
             && (!item.inventory_enabled
@@ -410,7 +498,18 @@ export default function BusinessCatalogScreen() {
                 <View style={styles.productCopy}>
                   <Text style={[styles.name, { color: colors.text }]}>{item.name}</Text>
                   {item.category ? <Text style={[styles.meta, { color: colors.muted }]}>{item.category}</Text> : null}
-                  <Text style={[styles.price, { color: colors.primary }]}>{formatCOP(item.price)}</Text>
+                  {promotion ? (
+                    <View style={styles.promotionPriceRow}>
+                      <Text style={[styles.oldPrice, { color: colors.muted }]}>{formatCOP(item.price)}</Text>
+                      <Text style={styles.promotionPrice}>{formatCOP(previewPrice)}</Text>
+                      <Text style={styles.discountBadge}>-{Number(promotion.discount_percent)}%</Text>
+                    </View>
+                  ) : <Text style={[styles.price, { color: colors.primary }]}>{formatCOP(item.price)}</Text>}
+                  {promotion ? (
+                    <Text style={[styles.meta, { color: promotion.is_active ? '#14804A' : colors.muted }]}>
+                      {promotion.is_active ? 'Promoción configurada' : 'Promoción pausada'} · {formatPromotionRange(promotion)}
+                    </Text>
+                  ) : null}
                   <Text style={[styles.meta, { color: colors.muted }]}>
                     {effectivelyAvailable
                       ? item.inventory_enabled
@@ -424,6 +523,7 @@ export default function BusinessCatalogScreen() {
                 </View>
                 <View style={styles.actions}>
                   <Pressable onPress={() => openEditProduct(item)}><Text style={styles.link}>Editar</Text></Pressable>
+                  <Pressable onPress={() => openPromotionEditor(item)}><Text style={styles.link}>{promotion ? 'Promoción' : 'Promocionar'}</Text></Pressable>
                   <Pressable onPress={() => deleteProduct(item)}><Text style={[styles.link, styles.delete]}>Eliminar</Text></Pressable>
                 </View>
                 <View style={styles.availabilityRow}>
@@ -490,6 +590,76 @@ export default function BusinessCatalogScreen() {
         </View>
       </Modal>
 
+      <Modal visible={promotionModal} transparent animationType="slide" onRequestClose={() => setPromotionModal(false)}>
+        <View style={styles.backdrop}>
+          <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalScroll}>
+            <View style={[styles.modal, { backgroundColor: colors.surface }]}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Promoción · {promotionProduct?.name}</Text>
+              <Text style={[styles.meta, { color: colors.muted }]}>Precio normal: {formatCOP(promotionProduct?.price || 0)}</Text>
+              <TextInput
+                value={promotionForm?.discountPercent || ''}
+                onChangeText={(discountPercent) => setPromotionForm((current) => ({ ...current, discountPercent }))}
+                placeholder="Descuento en porcentaje (p. ej. 20)"
+                keyboardType="decimal-pad" placeholderTextColor={colors.muted} style={styles.input}
+              />
+              {promotionProduct && Number(promotionForm?.discountPercent) > 0
+                && Number(promotionForm?.discountPercent) < 100 ? (
+                <View style={styles.promotionPreview}>
+                  <Text style={styles.previewEyebrow}>Así lo verá el cliente</Text>
+                  <Text style={styles.previewOldPrice}>{formatCOP(promotionProduct.price)}</Text>
+                  <Text style={styles.previewNewPrice}>{formatCOP(Math.round(
+                    Number(promotionProduct.price) * (100 - Number(promotionForm.discountPercent)) / 100,
+                  ))}</Text>
+                  <Text style={styles.previewDiscount}>-{promotionForm.discountPercent}% de descuento</Text>
+                </View>
+              ) : null}
+              <View style={styles.promotionQuickActions}>
+                <Text style={[styles.meta, { color: colors.text }]}>Vigencia</Text>
+                <Pressable onPress={() => setPromotionForm((current) => ({
+                  ...current, startDate: todayInBogota(), endDate: todayInBogota(),
+                }))} style={styles.quickButton}><Text style={styles.quickButtonText}>Solo hoy</Text></Pressable>
+              </View>
+              <TextInput
+                value={promotionForm?.startDate || ''}
+                onChangeText={(startDate) => setPromotionForm((current) => ({ ...current, startDate }))}
+                placeholder="Desde · AAAA-MM-DD" placeholderTextColor={colors.muted} style={styles.input}
+              />
+              <TextInput
+                value={promotionForm?.endDate || ''}
+                onChangeText={(endDate) => setPromotionForm((current) => ({ ...current, endDate }))}
+                placeholder="Hasta · AAAA-MM-DD" placeholderTextColor={colors.muted} style={styles.input}
+              />
+              <View style={styles.switchRow}>
+                <Text style={[styles.meta, { color: colors.text }]}>Todo el día</Text>
+                <Switch value={promotionForm?.allDay ?? true} onValueChange={(allDay) => setPromotionForm((current) => ({ ...current, allDay }))} />
+              </View>
+              {!promotionForm?.allDay ? (
+                <View style={styles.timeRow}>
+                  <TextInput
+                    value={promotionForm?.startTime || ''}
+                    onChangeText={(startTime) => setPromotionForm((current) => ({ ...current, startTime }))}
+                    placeholder="Desde HH:MM" keyboardType="numbers-and-punctuation" placeholderTextColor={colors.muted} style={[styles.input, styles.timeInput]}
+                  />
+                  <TextInput
+                    value={promotionForm?.endTime || ''}
+                    onChangeText={(endTime) => setPromotionForm((current) => ({ ...current, endTime }))}
+                    placeholder="Hasta HH:MM" keyboardType="numbers-and-punctuation" placeholderTextColor={colors.muted} style={[styles.input, styles.timeInput]}
+                  />
+                </View>
+              ) : null}
+              <View style={styles.switchRow}>
+                <Text style={[styles.meta, { color: colors.text }]}>Promoción activa</Text>
+                <Switch value={promotionForm?.isActive ?? true} onValueChange={(isActive) => setPromotionForm((current) => ({ ...current, isActive }))} />
+              </View>
+              <View style={styles.modalActions}>
+                <AnimatedButton title="Cancelar" variant="secondary" onPress={() => setPromotionModal(false)} />
+                <AnimatedButton title={saving ? 'Guardando...' : 'Guardar promoción'} disabled={saving} onPress={savePromotion} />
+              </View>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
       <Modal visible={optionModal} transparent animationType="slide" onRequestClose={() => setOptionModal(false)}>
         <View style={styles.backdrop}>
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalScroll}>
@@ -533,8 +703,12 @@ const createStyles = () => StyleSheet.create({
   productCopy: { flex: 1 },
   name: { fontSize: 16, fontWeight: '700' },
   price: { fontSize: 15, fontWeight: '700', marginTop: 4 },
+  promotionPriceRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 4 },
+  oldPrice: { fontSize: 13, textDecorationLine: 'line-through' },
+  promotionPrice: { color: '#D84315', fontSize: 18, fontWeight: '900' },
+  discountBadge: { backgroundColor: '#D84315', color: '#FFFFFF', borderRadius: 8, overflow: 'hidden', paddingHorizontal: 7, paddingVertical: 3, fontWeight: '800', fontSize: 11 },
   meta: { fontSize: 12, lineHeight: 18, marginTop: 4 },
-  actions: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+  actions: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 4 },
   link: { color: '#3949AB', fontSize: 13, fontWeight: '700', padding: 4 },
   delete: { color: '#B3261E' },
   optionsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
@@ -554,4 +728,14 @@ const createStyles = () => StyleSheet.create({
   typeChoice: { flex: 1, alignItems: 'center', padding: 10, borderWidth: 1, borderColor: '#D5D7DD', borderRadius: 8 },
   typeChoiceActive: { backgroundColor: '#3949AB', borderColor: '#3949AB' },
   modalActions: { flexDirection: 'row', justifyContent: 'space-between', gap: 10, marginTop: 6 },
+  promotionPreview: { backgroundColor: '#FFF2E8', borderColor: '#FF8A3D', borderWidth: 1, borderRadius: 12, alignItems: 'center', padding: 14, gap: 3 },
+  previewEyebrow: { color: '#713711', fontSize: 12, fontWeight: '700' },
+  previewOldPrice: { color: '#6B7280', fontSize: 14, textDecorationLine: 'line-through' },
+  previewNewPrice: { color: '#D84315', fontSize: 26, fontWeight: '900' },
+  previewDiscount: { color: '#B93812', fontSize: 13, fontWeight: '800' },
+  promotionQuickActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  quickButton: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#3949AB' },
+  quickButtonText: { color: '#FFFFFF', fontWeight: '700' },
+  timeRow: { flexDirection: 'row', gap: 8 },
+  timeInput: { flex: 1 },
 });

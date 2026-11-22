@@ -289,10 +289,10 @@ const BusinessHomeScreen = ({ navigation }) => {
     }
   };
 
-  const handleBusinessPayment = async (purpose) => {
+  const handleBusinessPayment = async (purpose, amountCop) => {
     setPaymentLoading(true);
     try {
-      const paymentUrl = await createBusinessPaymentLink(purpose);
+      const paymentUrl = await createBusinessPaymentLink(purpose, amountCop);
       await Linking.openURL(paymentUrl);
     } catch (error) {
       Alert.alert('No se pudo iniciar el pago', error.message);
@@ -585,7 +585,7 @@ const BusinessHomeScreen = ({ navigation }) => {
           balance={wallet.balance}
           subscriptionActive={subscription.is_active}
           loading={paymentLoading}
-          onTopUp={() => handleBusinessPayment('wallet')}
+          onTopUp={(amountCop) => handleBusinessPayment('wallet', amountCop)}
           onSubscribe={() => handleBusinessPayment('subscription')}
           onTransferBalance={() => navigation.navigate('BusinessWalletTransfers')}
         />

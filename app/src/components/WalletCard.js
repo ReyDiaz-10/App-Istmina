@@ -1,6 +1,6 @@
-import { AppText as Text } from './AppText.js';
-import React from 'react';
-import { StyleSheet, View } from 'react-native';
+import { AppText as Text, AppTextInput as TextInput } from './AppText.js';
+import React, { useState } from 'react';
+import { Alert, StyleSheet, View } from 'react-native';
 import AnimatedButton from './AnimatedButton';
 import { useAppTheme } from '../hooks/useAppTheme';
 import { usePreferencesStore } from '../store/preferencesStore';
@@ -16,6 +16,17 @@ export default function WalletCard({
 }) {
   const { colors } = useAppTheme();
   const locale = usePreferencesStore((state) => state.language);
+  const [topUpAmount, setTopUpAmount] = useState('20000');
+  const parsedTopUpAmount = Number(topUpAmount);
+  const validTopUpAmount = Number.isSafeInteger(parsedTopUpAmount) && parsedTopUpAmount >= 20000;
+
+  const handleTopUp = () => {
+    if (!validTopUpAmount) {
+      Alert.alert('Monto mínimo', 'La recarga de billetera debe ser de al menos $20.000 COP.');
+      return;
+    }
+    onTopUp?.(parsedTopUpAmount);
+  };
   return (
     <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       <Text style={[styles.title, { color: colors.text }]}>Billetera del negocio</Text>
@@ -31,16 +42,26 @@ export default function WalletCard({
       <Text style={[styles.description, { color: colors.muted }]}>
         Este saldo es un prepago para comisiones; no representa ventas pendientes de retiro.
       </Text>
+      <Text style={[styles.description, { color: colors.muted }]}>Recarga mínima: $20.000 COP. Puedes ingresar un valor mayor.</Text>
       {!subscriptionActive && Number(balance) <= 0 ? (
         <Text style={styles.warning}>
           No puedes recibir nuevos pedidos con saldo en cero. Recarga o activa Pro para continuar.
         </Text>
       ) : null}
       <View style={styles.actions}>
+        <TextInput
+          accessibilityLabel="Valor de recarga de la billetera en pesos colombianos"
+          value={topUpAmount}
+          onChangeText={(value) => setTopUpAmount(value.replace(/\D/g, '').slice(0, 10))}
+          placeholder="Monto de recarga en COP"
+          placeholderTextColor={colors.muted}
+          keyboardType="number-pad"
+          style={[styles.amountInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.input }]}
+        />
         <AnimatedButton
-          title={loading ? 'Abriendo pago...' : 'Recargar $50.000'}
-          onPress={onTopUp}
-          disabled={loading}
+          title={loading ? 'Abriendo pago...' : `Recargar ${formatCOP(parsedTopUpAmount, locale)}`}
+          onPress={handleTopUp}
+          disabled={loading || !validTopUpAmount}
           style={styles.action}
           buttonStyle={[styles.button, { backgroundColor: colors.primary, borderColor: colors.primary }]}
         />
@@ -52,7 +73,7 @@ export default function WalletCard({
           style={styles.action}
         />
         <AnimatedButton
-          title={subscriptionActive ? 'Suscripción activa' : 'Suscribirme $35.000/mes'}
+          title={subscriptionActive ? 'Suscripción activa' : 'Suscribirme $50.000/mes'}
           onPress={onSubscribe}
           disabled={loading || subscriptionActive}
           style={styles.action}
@@ -73,4 +94,5 @@ const styles = StyleSheet.create({
   actions: { marginTop: 14 },
   action: { alignSelf: 'stretch', marginTop: 8 },
   button: { width: '100%', backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' },
+  amountInput: { minHeight: 46, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, fontSize: 16, marginTop: 10 },
 });

@@ -1,6 +1,6 @@
 import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../../api/supabaseClient';
 import { useAppTheme } from '../../hooks/useAppTheme';
@@ -21,6 +21,7 @@ export default function AdminUserDetailsScreen({ navigation, route }) {
   const [profile, setProfile] = useState(null);
   const [entity, setEntity] = useState(null);
   const [verification, setVerification] = useState(null);
+  const [businessTrialStatus, setBusinessTrialStatus] = useState(null);
   const [documentUrls, setDocumentUrls] = useState({ face: null, plate: null, identity: null });
   const [documentError, setDocumentError] = useState('');
   const [history, setHistory] = useState([]);
@@ -98,6 +99,20 @@ export default function AdminUserDetailsScreen({ navigation, route }) {
       }
       setEntity(entityData);
       setVerification(verificationData);
+      if (profileData.role === 'negocio' && entityData?.id) {
+        const { data: trialStatus, error: trialStatusError } = await supabase.rpc(
+          'admin_business_subscription_trial_status',
+          { p_business_id: entityData.id },
+        );
+        if (trialStatusError) {
+          console.warn('No se pudo consultar la promoción del negocio:', trialStatusError.message);
+          setBusinessTrialStatus({ eligible: false, reason: 'status_unavailable' });
+        } else {
+          setBusinessTrialStatus(trialStatus);
+        }
+      } else {
+        setBusinessTrialStatus(null);
+      }
       setDocumentUrls({ face: null, plate: null, identity: null });
       setDocumentError('');
       if (profileData.role === 'repartidor' && verificationData) {
@@ -169,7 +184,10 @@ export default function AdminUserDetailsScreen({ navigation, route }) {
     }
   }, [profileId]);
 
-  useEffect(() => { void loadDetails(); }, [loadDetails]);
+  useEffect(() => {
+    const timer = setTimeout(() => { void loadDetails(); }, 0);
+    return () => clearTimeout(timer);
+  }, [loadDetails]);
 
   const accountAction = async (action) => {
     setSaving(true);
@@ -229,6 +247,42 @@ export default function AdminUserDetailsScreen({ navigation, route }) {
     }
   };
 
+  const grantBusinessTrial = async () => {
+    if (!entity?.id || profile?.role !== 'negocio' || saving) return;
+    setSaving(true);
+    setFeedback(null);
+    try {
+      const { data, error: grantError } = await supabase.rpc(
+        'admin_grant_business_subscription_trial',
+        { p_business_id: entity.id },
+      );
+      if (grantError) throw grantError;
+      const endDate = data?.ends_on
+        ? new Date(`${data.ends_on}T12:00:00`).toLocaleDateString()
+        : 'en siete días';
+      setFeedback({
+        type: 'success',
+        text: `Semana promocional activada hasta ${endDate}. Se envió una notificación al negocio.`,
+      });
+      await loadDetails();
+    } catch (grantError) {
+      setFeedback({ type: 'error', text: grantError.message || 'No se pudo conceder la promoción.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmBusinessTrial = () => {
+    Alert.alert(
+      'Activar semana promocional',
+      `Se activará IstmiYa Pro por siete días para ${entity?.store_name || 'este negocio'}. La promoción se puede conceder una sola vez y el negocio recibirá una notificación.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Activar promoción', onPress: () => { void grantBusinessTrial(); } },
+      ],
+    );
+  };
+
   if (loading && !profile) return <SafeAreaView style={[styles.center, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} size="large" /></SafeAreaView>;
 
   const permanent = Boolean(profile?.account_deactivated_at);
@@ -241,6 +295,15 @@ export default function AdminUserDetailsScreen({ navigation, route }) {
       : false;
   const completedLabel = profile?.role === 'cliente' ? 'Pedidos entregados' : profile?.role === 'negocio' ? 'Pedidos entregados' : 'Entregas realizadas';
   const totalLabel = profile?.role === 'cliente' ? 'Pedidos hechos' : profile?.role === 'negocio' ? 'Pedidos recibidos' : 'Pedidos asignados';
+  const businessTrialMessage = {
+    eligible: 'El negocio está aprobado y puede recibir una semana promocional. Solo se concede una vez.',
+    already_granted: `La promoción ya fue concedida${businessTrialStatus?.ends_on ? `; terminó el ${new Date(`${businessTrialStatus.ends_on}T12:00:00`).toLocaleDateString()}` : ''}.`,
+    business_not_approved: 'Aprueba el perfil y activa el local antes de conceder la promoción.',
+    account_not_active: 'La cuenta del titular debe estar activa y sin bloqueo para recibir la promoción.',
+    subscription_history_exists: 'Este negocio ya tiene historial de suscripción; la promoción de bienvenida no está disponible.',
+    business_not_found: 'No se encontró el negocio asociado a este perfil.',
+    status_unavailable: 'No se pudo consultar la promoción. Verifica que la migración 0041 esté aplicada en Supabase.',
+  }[businessTrialStatus?.reason] || 'Consultando si el negocio puede recibir la promoción…';
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
@@ -300,6 +363,18 @@ export default function AdminUserDetailsScreen({ navigation, route }) {
               <Text style={[styles.muted, { color: colors.muted }]}>Este perfil todavía requiere aprobación administrativa para operar.</Text>
               <ActionButton title={verificationReady ? 'Aprobar y activar perfil' : 'Completa los requisitos para aprobar'} onPress={() => void approveVerification()} colors={colors} disabled={saving || blocked || permanent || !verificationReady} />
             </> : null}
+            {profile.role === 'negocio' ? <View style={[styles.trialCard, { borderColor: colors.border }]}>
+              <Text style={[styles.section, { color: colors.text }]}>Semana promocional de IstmiYa Pro</Text>
+              <Text style={[styles.muted, { color: colors.muted }]}>{businessTrialMessage}</Text>
+              {businessTrialStatus?.eligible ? (
+                <ActionButton
+                  title="Dar una semana promocional"
+                  onPress={confirmBusinessTrial}
+                  colors={colors}
+                  disabled={saving}
+                />
+              ) : null}
+            </View> : null}
             {blocked ? <ActionButton title="Dar de alta / quitar bloqueo" onPress={() => void accountAction('activate')} colors={colors} disabled={saving} /> : null}
             {!blocked && !permanent ? <>
               <Text style={[styles.muted, { color: colors.muted }]}>Bloquear temporalmente</Text>
@@ -358,6 +433,7 @@ const styles = StyleSheet.create({
   muted: { fontSize: 13, lineHeight: 19 },
   section: { fontSize: 17, fontWeight: '900', marginBottom: 8 },
   profileCard: { borderWidth: 1, borderRadius: 12, padding: 14, marginTop: 8 },
+  trialCard: { borderWidth: 1, borderRadius: 10, padding: 12, marginTop: 12 },
   status: { textTransform: 'capitalize', fontWeight: '900', fontSize: 15, marginBottom: 6 },
   metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   metric: { borderWidth: 1, borderRadius: 10, padding: 12, minWidth: '48%', flexGrow: 1 },

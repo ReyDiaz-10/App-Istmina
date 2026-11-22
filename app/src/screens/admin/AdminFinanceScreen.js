@@ -294,7 +294,7 @@ export default function AdminFinanceScreen({ navigation }) {
           <Text style={[styles.meta, { color: colors.muted }]}>{item.owner_name || 'Titular sin nombre'}</Text>
           <Text style={[styles.meta, { color: colors.text }]}>Billetera: {formatCOP(item.wallet_balance)}</Text>
           <Text style={[styles.meta, { color: colors.text }]}>Ventas netas: {formatCOP(item.sales_net)}</Text>
-          <Text style={[styles.meta, { color: colors.muted }]}>{item.pro_active ? 'Suscripción activa Pro · $35.000 COP/mes' : `Comisión estimada (10%): ${formatCOP(item.commission_10_percent)}`}</Text>
+          <Text style={[styles.meta, { color: colors.muted }]}>{item.pro_active ? 'Suscripción activa Pro · $50.000 COP/mes' : `Comisión estimada (10%): ${formatCOP(item.commission_10_percent)}`}</Text>
         </View>
       ))}
 
