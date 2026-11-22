@@ -30,6 +30,7 @@ export default function AdminDashboardScreen({ navigation }) {
   const [loadError, setLoadError] = useState(null);
   const [emailPreferences, setEmailPreferencesState] = useState({ profilePending: true, inappropriateLanguage: true, financialException: true, email: '' });
   const [emailPrefError, setEmailPrefError] = useState('');
+  const [emailPrefSuccess, setEmailPrefSuccess] = useState('');
   const [savingEmailPref, setSavingEmailPref] = useState(false);
   const [data, setData] = useState({
     users: 0,
@@ -218,23 +219,27 @@ export default function AdminDashboardScreen({ navigation }) {
     <View style={[styles.reviewCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
       <Text style={[styles.rowTitle, { color: colors.text }]}>Alertas por correo</Text>
       <Text style={[styles.muted, { color: colors.muted }]}>Selecciona los avisos que quieres recibir. Remitente: istmiyanotificaciones@gmail.com · Soporte: istmiyasoporte@gmail.com.</Text>
-      {emailPrefError ? <Text style={{ color: '#B42318' }}>{emailPrefError}</Text> : null}
-      <TextInput accessibilityLabel="Correo destinatario de alertas" autoCapitalize="none" keyboardType="email-address" placeholder="neildiazusb@gmail.com" value={emailPreferences.email} onChangeText={(email) => setEmailPreferencesState((v) => ({ ...v, email }))} style={[styles.replyInput, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} />
+      {emailPrefError ? <Text accessibilityRole="alert" style={{ color: '#B42318' }}>{emailPrefError}</Text> : null}
+      {emailPrefSuccess ? <Text accessibilityRole="alert" style={{ color: '#146C43', marginTop: 8 }}>{emailPrefSuccess}</Text> : null}
+      <TextInput accessibilityLabel="Correo destinatario de alertas" autoCapitalize="none" keyboardType="email-address" placeholder="neildiazusb@gmail.com" value={emailPreferences.email} onChangeText={(email) => { setEmailPrefSuccess(''); setEmailPreferencesState((v) => ({ ...v, email })); }} style={[styles.replyInput, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} />
       {[
         ['profilePending', 'Perfiles pendientes de aprobación'],
         ['inappropriateLanguage', 'Lenguaje inapropiado moderado en chat'],
         ['financialException', 'Excepciones financieras y de retiro'],
-      ].map(([key, label]) => <Pressable key={key} accessibilityRole="checkbox" accessibilityState={{ checked: Boolean(emailPreferences[key]) }} onPress={() => setEmailPreferencesState((v) => ({ ...v, [key]: !v[key] }))}><Text style={{ color: colors.text, marginTop: 7 }}>{emailPreferences[key] ? '☑' : '☐'} {label}</Text></Pressable>)}
-      <Pressable disabled={savingEmailPref} onPress={async () => {
-        setSavingEmailPref(true); setEmailPrefError('');
+      ].map(([key, label]) => <Pressable key={key} accessibilityRole="checkbox" accessibilityState={{ checked: Boolean(emailPreferences[key]) }} onPress={() => { setEmailPrefSuccess(''); setEmailPreferencesState((v) => ({ ...v, [key]: !v[key] })); }}><Text style={{ color: colors.text, marginTop: 7 }}>{emailPreferences[key] ? '☑' : '☐'} {label}</Text></Pressable>)}
+      <Pressable accessibilityRole="button" disabled={savingEmailPref} onPress={async () => {
+        setSavingEmailPref(true); setEmailPrefError(''); setEmailPrefSuccess('');
         try {
           const email = emailPreferences.email.trim();
           if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Ingresa un correo válido.');
           await setEmailPreferences(profile.id, { ...emailPreferences, email });
+          setEmailPrefSuccess('Preferencias de correo guardadas.');
         }
         catch (e) { setEmailPrefError(e.message || 'No se pudo guardar.'); }
         finally { setSavingEmailPref(false); }
-      }}><Text style={[styles.link, { color: colors.primary }]}>{savingEmailPref ? 'Guardando…' : 'Guardar preferencias de correo'}</Text></Pressable>
+      }} style={[styles.emailSaveButton, { backgroundColor: colors.primary }, savingEmailPref && styles.emailSaveButtonDisabled]}>
+        <Text style={styles.emailSaveButtonText}>{savingEmailPref ? 'Guardando…' : 'Guardar preferencias de correo'}</Text>
+      </Pressable>
     </View>
     <View style={styles.adminLinks}>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminFinance')}><Text style={[styles.link, { color: colors.primary }]}>Finanzas y retiros</Text></Pressable>
@@ -409,6 +414,9 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   adminLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 },
   adminLink: { borderRadius: 10, padding: 8 },
+  emailSaveButton: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', borderRadius: 8, paddingHorizontal: 14, marginTop: 12 },
+  emailSaveButtonDisabled: { opacity: 0.65 },
+  emailSaveButtonText: { color: '#FFFFFF', fontWeight: '800' },
   title: { fontSize: 26, fontWeight: '800', color: '#1A237E' },
   subtitle: { color: '#687078', marginTop: 3, marginBottom: 16 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },

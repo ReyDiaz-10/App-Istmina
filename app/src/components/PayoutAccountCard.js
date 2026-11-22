@@ -25,7 +25,7 @@ export default function PayoutAccountCard({
     let active = true;
     const loadBanks = async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('payout-banks');
+        const { data, error } = await supabase.functions.invoke('payout-banks', { method: 'GET' });
         if (error) throw error;
         if (!Array.isArray(data?.banks)) throw new Error('El servicio no devolvió bancos.');
         if (active) setBanks(data.banks);

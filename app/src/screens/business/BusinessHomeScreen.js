@@ -27,7 +27,7 @@ import HelpButton from '../../components/HelpButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { formatCOP } from '../../utils/formatters';
-import { isValidOperatingTime, isOperatingRangeValid } from '../../utils/operatingHours';
+import { isValidOperatingTime, isOperatingRangeValid, formatOperatingStatus } from '../../utils/operatingHours';
 
 const Metric = ({ label, value, colors }) => (
   <View style={[styles.metric, { backgroundColor: colors.background }]}>
@@ -66,6 +66,10 @@ const BusinessHomeScreen = ({ navigation }) => {
   ]);
   const [savingOperatingHours, setSavingOperatingHours] = useState(false);
   const [operatingHoursFeedback, setOperatingHoursFeedback] = useState(null);
+  const [currentOperatingStatus, setCurrentOperatingStatus] = useState(null);
+  const [operatingStatusError, setOperatingStatusError] = useState('');
+  const [businessStatusFeedback, setBusinessStatusFeedback] = useState(null);
+  const [savingBusinessStatus, setSavingBusinessStatus] = useState(false);
   const [savingPickupSettings, setSavingPickupSettings] = useState(false);
 
   // Estados de Interfaz (UI)
@@ -185,7 +189,7 @@ const BusinessHomeScreen = ({ navigation }) => {
           return {
             day_of_week,
             name,
-            is_open: Boolean(saved),
+            is_open: Boolean(saved?.is_confirmed),
             opens_at: saved?.opens_at?.slice(0, 5) || '08:00',
             closes_at: saved?.closes_at?.slice(0, 5) || '21:00',
           };
@@ -204,12 +208,37 @@ const BusinessHomeScreen = ({ navigation }) => {
     return () => clearTimeout(initialLoad);
   }, [loadDashboardData]);
 
+  useEffect(() => {
+    if (!business?.id) return undefined;
+    let active = true;
+    const refreshStatus = async () => {
+      try {
+        const { data, error } = await supabase.rpc('get_business_operating_status', {
+          p_business_id: business.id,
+        });
+        if (error) throw error;
+        if (!active) return;
+        setCurrentOperatingStatus(data);
+        setOperatingStatusError('');
+      } catch (error) {
+        if (!active) return;
+        setOperatingStatusError('No se pudo consultar el horario actual.');
+        console.error('No se pudo consultar el horario operativo:', error.message);
+      }
+    };
+    void refreshStatus();
+    const timer = setInterval(() => { void refreshStatus(); }, 60_000);
+    return () => { active = false; clearInterval(timer); };
+  }, [business?.id]);
+
   const updateBusinessStatus = async (newStatus) => {
+    setBusinessStatusFeedback(null);
     if (newStatus === 'activo' && verificationStatus !== 'aprobado') {
-      Alert.alert('Verificación pendiente', 'El negocio debe ser aprobado por el equipo administrador antes de activarse.');
+      setBusinessStatusFeedback({ type: 'error', text: 'El negocio debe ser aprobado por el equipo administrador antes de activarse.' });
       return;
     }
 
+    setSavingBusinessStatus(true);
     try {
       const { error } = await supabase
         .from('businesses')
@@ -219,9 +248,13 @@ const BusinessHomeScreen = ({ navigation }) => {
       if (error) throw error;
 
       setBusiness({ ...business, status: newStatus });
-      Alert.alert('Actualizado', `El negocio ahora está ${newStatus}`);
+      const statusLabel = newStatus === 'fuera_de_servicio' ? 'bloqueado' : newStatus;
+      setBusinessStatusFeedback({ type: 'success', text: `Estado del local actualizado: ${statusLabel}.` });
     } catch (error) {
-      Alert.alert('Error', error.message);
+      setBusinessStatusFeedback({ type: 'error', text: `No se pudo cambiar el estado: ${error.message}` });
+      console.error('No se pudo actualizar el estado del negocio:', error.message);
+    } finally {
+      setSavingBusinessStatus(false);
     }
   };
 
@@ -316,8 +349,19 @@ const BusinessHomeScreen = ({ navigation }) => {
       if (error) throw error;
       setOperatingHoursFeedback({
         type: 'success',
-        text: 'Horario operativo confirmado; los días cerrados no recibirán pedidos.',
+        text: 'Horario guardado. El estado actual se calcula según la hora de Colombia; los días cerrados no recibirán pedidos.',
       });
+      try {
+        const { data: statusData, error: statusError } = await supabase.rpc('get_business_operating_status', {
+          p_business_id: business.id,
+        });
+        if (statusError) throw statusError;
+        setCurrentOperatingStatus(statusData);
+        setOperatingStatusError('');
+      } catch (statusError) {
+        setOperatingStatusError('Horario guardado, pero no se pudo actualizar el estado actual.');
+        console.error('El horario se guardó, pero no se pudo refrescar su estado:', statusError.message);
+      }
     } catch (error) {
       setOperatingHoursFeedback({ type: 'error', text: error.message });
     } finally {
@@ -573,7 +617,13 @@ const BusinessHomeScreen = ({ navigation }) => {
         <View style={styles.operatingCard}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Horario operativo</Text>
           <Text style={[styles.verificationText, { color: colors.muted }]}>
-            Configura los días y horarios de atención. Los días desactivados permanecerán cerrados. Se usa la zona horaria de Colombia (America/Bogota).
+            Activa los días en que atiendes y configura sus horas. El estado abierto/cerrado actual se calcula con la hora de Colombia (America/Bogota).
+          </Text>
+          <Text style={[styles.operatingDay, { color: colors.text }]}>Estado actual del local</Text>
+          <Text accessibilityRole="alert" style={[styles.actionFeedback, { color: currentOperatingStatus?.is_open ? colors.primary : colors.muted }]}>
+            {operatingStatusError || (currentOperatingStatus
+              ? formatOperatingStatus(currentOperatingStatus)
+              : 'Consultando horario actual…')}
           </Text>
           {operatingHours.map((row, index) => (
             <View key={row.day_of_week} style={styles.operatingDayGroup}>
@@ -586,7 +636,7 @@ const BusinessHomeScreen = ({ navigation }) => {
                     itemIndex === index ? { ...item, is_open } : item))}
                 />
                 <Text style={[styles.operatingDayStatus, { color: colors.muted }]}>
-                  {row.is_open ? 'Abierto' : 'Cerrado'}
+                  {row.is_open ? 'Atiende' : 'Cerrado'}
                 </Text>
               </View>
               {row.is_open ? (
@@ -644,7 +694,7 @@ const BusinessHomeScreen = ({ navigation }) => {
                 key={s}
                 title={s === 'fuera_de_servicio' ? 'Bloqueado' : s.charAt(0).toUpperCase() + s.slice(1)}
                 onPress={() => updateBusinessStatus(s)}
-                disabled={s === 'activo' && verificationStatus !== 'aprobado'}
+                disabled={savingBusinessStatus || (s === 'activo' && verificationStatus !== 'aprobado')}
                 variant={business.status === s ? 'primary' : 'secondary'}
                 style={styles.statusAction}
                 buttonStyle={styles.statusBtn}
@@ -652,6 +702,14 @@ const BusinessHomeScreen = ({ navigation }) => {
               />
             ))}
           </View>
+          {businessStatusFeedback ? (
+            <Text
+              accessibilityRole="alert"
+              style={[styles.actionFeedback, { color: businessStatusFeedback.type === 'success' ? colors.primary : '#B3261E' }]}
+            >
+              {businessStatusFeedback.text}
+            </Text>
+          ) : null}
         </View>
 
         {/* GESTIÓN DE PRODUCTOS */}

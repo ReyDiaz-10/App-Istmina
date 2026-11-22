@@ -5,7 +5,7 @@ import NotificationBell from '../../components/NotificationBell';
 import {
   StyleSheet,
   View,
-  FlatList,
+  ScrollView,
   Linking,
   ActivityIndicator,
   Alert,
@@ -371,6 +371,7 @@ const DriverHomeScreen = ({ navigation }) => {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
       <HelpButton navigation={navigation} context="repartidor" orderId={activeOrder?.id} compact />
       <View style={styles.sessionActions}>
         <AnimatedButton title="Mi perfil" variant="secondary" onPress={() => navigation.navigate('DriverProfile')} />
@@ -610,22 +611,20 @@ const DriverHomeScreen = ({ navigation }) => {
               <Text style={styles.offlineText}>Ponte en línea para ver pedidos disponibles</Text>
             </View>
           ) : (
-            <FlatList
-              data={availableOrders}
-              keyExtractor={(item) => item.id}
-              renderItem={renderOrderCard}
-              contentContainerStyle={styles.list}
-              ListEmptyComponent={<Text style={styles.emptyText}>No hay pedidos disponibles en este momento.</Text>}
-            />
+            availableOrders.length > 0
+              ? availableOrders.map((item) => <View key={item.id}>{renderOrderCard({ item })}</View>)
+              : <Text style={styles.emptyText}>No hay pedidos disponibles en este momento.</Text>
           )}
         </View>
       )}
+      </ScrollView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F5F7FA' },
+  scrollContent: { flexGrow: 1, paddingBottom: 24 },
   sessionActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', marginHorizontal: 18, gap: 8 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   header: {
@@ -676,9 +675,8 @@ const styles = StyleSheet.create({
   codeInput: { borderWidth: 1, borderColor: '#B0BEC5', borderRadius: 9, padding: 12, marginTop: 6, fontSize: 20, letterSpacing: 4, textAlign: 'center', color: '#222222' },
 
   // Available Orders
-  availableSection: { flex: 1, padding: 20 },
+  availableSection: { padding: 20 },
   sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#1A237E', marginBottom: 15 },
-  list: { paddingBottom: 20 },
   orderCard: {
     backgroundColor: '#fff', borderRadius: 15, padding: 15,
     marginBottom: 15, flexDirection: 'row', alignItems: 'center',
