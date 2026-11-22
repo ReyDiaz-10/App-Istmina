@@ -1,6 +1,6 @@
 import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/driver/DriverHomeScreen.js
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import NotificationBell from '../../components/NotificationBell';
 import {
   StyleSheet,
@@ -26,6 +26,7 @@ import { getDriverBusinessTargetMinutes } from '../../utils/deliveryEtas.js';
 
 const DriverHomeScreen = ({ navigation }) => {
   const { profile } = useAuthStore();
+  const profileId = profile?.id;
   const signOut = useAuthStore((state) => state.signOut);
   const theme = useRoleTheme();
   const { colors } = useAppTheme();
@@ -33,6 +34,7 @@ const DriverHomeScreen = ({ navigation }) => {
 
   // Estados de Datos
   const [driverData, setDriverData] = useState(null);
+  const driverDataRef = useRef(null);
   const [availableOrders, setAvailableOrders] = useState([]);
   const [activeOrder, setActiveOrder] = useState(null);
   const [pickupCode, setPickupCode] = useState('');
@@ -48,7 +50,7 @@ const DriverHomeScreen = ({ navigation }) => {
 
   // --- LÓGICA DE DATOS ---
 
-  const fetchAvailableOrders = useCallback(async (driver = driverData) => {
+  const fetchAvailableOrders = useCallback(async (driver = driverDataRef.current) => {
     if (!driver?.is_available || driver.verification_status !== 'aprobado') return;
 
     try {
@@ -65,20 +67,32 @@ const DriverHomeScreen = ({ navigation }) => {
     } catch (error) {
       console.error(error);
     }
-  }, [driverData]);
+  }, []);
 
-  const fetchActiveOrder = useCallback(async (driverId = driverData?.id) => {
+  const fetchActiveOrder = useCallback(async (driverId = driverDataRef.current?.id) => {
     if (!driverId) return;
     try {
       const { data, error } = await supabase
         .from('orders')
-        .select('*, businesses(store_name, address), profiles(full_name)')
+        .select('*, businesses(store_name, address)')
         .eq('driver_id', driverId)
         .in('status', ['preparando', 'repartidor_asignado', 'recogido', 'en_camino', 'no_entregado'])
         .maybeSingle();
 
       if (error) throw error;
-      setActiveOrder(data);
+      let orderWithClient = data;
+      if (data?.client_id) {
+        const { data: clientProfile, error: clientProfileError } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', data.client_id)
+          .maybeSingle();
+        if (clientProfileError) {
+          console.warn('No se pudo cargar el nombre del cliente del pedido:', clientProfileError.message);
+        }
+        orderWithClient = { ...data, profiles: clientProfile ? { full_name: clientProfile.full_name } : null };
+      }
+      setActiveOrder(orderWithClient);
       if (data?.status === 'no_entregado') {
         const { data: incident, error: incidentError } = await supabase
           .from('order_delivery_incidents')
@@ -106,10 +120,10 @@ const DriverHomeScreen = ({ navigation }) => {
     } catch (error) {
       console.error(error);
     }
-  }, [driverData?.id]);
+  }, []);
 
   const initializeDriver = useCallback(async () => {
-    if (!profile?.id) {
+    if (!profileId) {
       setLoading(false);
       return;
     }
@@ -117,10 +131,11 @@ const DriverHomeScreen = ({ navigation }) => {
       const { data, error } = await supabase
         .from('drivers')
         .select('*')
-        .eq('profile_id', profile.id)
+        .eq('profile_id', profileId)
         .single();
 
       if (error) throw error;
+      driverDataRef.current = data;
       setDriverData(data);
       await fetchActiveOrder(data.id);
       await fetchAvailableOrders(data);
@@ -129,25 +144,26 @@ const DriverHomeScreen = ({ navigation }) => {
     } finally {
       setLoading(false);
     }
-  }, [fetchActiveOrder, fetchAvailableOrders, profile]);
+  }, [fetchActiveOrder, fetchAvailableOrders, profileId]);
 
   useEffect(() => {
     const initialLoad = setTimeout(() => {
       void initializeDriver();
     }, 0);
-    if (!profile?.id) {
+    if (!profileId) {
       return () => clearTimeout(initialLoad);
     }
     const subscription = supabase
       .channel('driver-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchAvailableOrders();
-        fetchActiveOrder();
+        void fetchAvailableOrders(driverDataRef.current);
+        void fetchActiveOrder(driverDataRef.current?.id);
       })
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'drivers', filter: `profile_id=eq.${profile.id}` },
+        { event: 'UPDATE', schema: 'public', table: 'drivers', filter: `profile_id=eq.${profileId}` },
         ({ new: updatedDriver }) => {
+          driverDataRef.current = updatedDriver;
           setDriverData(updatedDriver);
           if (updatedDriver.verification_status === 'aprobado' && updatedDriver.is_available) {
             fetchAvailableOrders(updatedDriver);
@@ -162,7 +178,7 @@ const DriverHomeScreen = ({ navigation }) => {
       clearTimeout(initialLoad);
       supabase.removeChannel(subscription);
     };
-  }, [fetchActiveOrder, fetchAvailableOrders, initializeDriver, profile?.id]);
+  }, [fetchActiveOrder, fetchAvailableOrders, initializeDriver, profileId]);
 
   useEffect(() => {
     const initialClock = setTimeout(() => setNow(Date.now()), 0);
@@ -189,9 +205,11 @@ const DriverHomeScreen = ({ navigation }) => {
         .single();
 
       if (error) throw error;
-      setDriverData((current) => ({ ...current, ...updatedDriver }));
+      const nextDriver = { ...driverDataRef.current, ...updatedDriver };
+      driverDataRef.current = nextDriver;
+      setDriverData(nextDriver);
 
-      if (value) await fetchAvailableOrders({ ...driverData, ...updatedDriver });
+      if (value) await fetchAvailableOrders(nextDriver);
       else setAvailableOrders([]);
     } catch (error) {
       Alert.alert('Error', error.message);
@@ -387,8 +405,8 @@ const DriverHomeScreen = ({ navigation }) => {
       {/* HEADER DE DISPONIBILIDAD */}
       <View style={styles.header}>
         <View style={styles.availabilityInfo}>
-          <Text style={[styles.welcomeText, { color: colors.text }]}>Hola, {profile?.full_name || 'Repartidor'}</Text>
-          <Text style={[styles.statusCaption, { color: colors.muted }]}>Estado de disponibilidad</Text>
+          <Text style={styles.welcomeText}>Hola, {profile?.full_name || 'Repartidor'}</Text>
+          <Text style={[styles.statusCaption, { color: '#475467' }]}>Estado de disponibilidad</Text>
           <View style={[
             styles.statusBadge,
             driverData?.verification_status !== 'aprobado'
@@ -409,7 +427,7 @@ const DriverHomeScreen = ({ navigation }) => {
         </View>
         <NotificationBell navigation={navigation} compact />
         <View style={styles.availabilityControl}>
-          <Text style={[styles.switchLabel, { color: colors.text }]}>
+          <Text style={[styles.switchLabel, { color: '#344054' }]}>
             {driverData?.is_available ? 'Desconectarme' : 'Ponerme en línea'}
           </Text>
           <Switch

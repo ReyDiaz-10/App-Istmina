@@ -26,6 +26,8 @@ import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
 import AdminFinanceScreen from './src/screens/admin/AdminFinanceScreen';
 import AdminActivityScreen from './src/screens/admin/AdminActivityScreen';
 import AdminChatAuditScreen from './src/screens/admin/AdminChatAuditScreen';
+import AdminUsersScreen from './src/screens/admin/AdminUsersScreen';
+import AdminUserDetailsScreen from './src/screens/admin/AdminUserDetailsScreen';
 import SupportTickets from './src/screens/client/SupportTickets';
 import AboutScreen from './src/screens/client/AboutScreen';
 import PrivacyScreen from './src/screens/client/PrivacyScreen';
@@ -154,6 +156,8 @@ export default function App() {
           <Stack.Screen name="AdminFinance" component={AdminFinanceScreen} />
           <Stack.Screen name="AdminActivity" component={AdminActivityScreen} />
           <Stack.Screen name="AdminChatAudit" component={AdminChatAuditScreen} />
+          <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
+          <Stack.Screen name="AdminUserDetails" component={AdminUserDetailsScreen} />
           <Stack.Screen name="Notifications" component={NotificationCenterScreen} />
           <Stack.Screen name="Support" component={SupportTickets} />
           <Stack.Screen name="About" component={AboutScreen} />
@@ -170,11 +174,12 @@ export default function App() {
 }
 
 function NotificationCenterScreen({ navigation }) {
+  const role = useAuthStore((state) => state.profile?.role);
   const [rows, setRows] = React.useState([]); const [error, setError] = React.useState(''); const [loading, setLoading] = React.useState(true);
-  const load = React.useCallback(async () => { setLoading(true); try { const { data, error: queryError } = await supabase.from('user_notifications').select('id,title,body,order_id,created_at,read_at').order('created_at', { ascending: false }).limit(100); if (queryError) throw queryError; setRows(data || []); setError(''); } catch (e) { setError(e.message || 'No se pudieron cargar las notificaciones.'); } finally { setLoading(false); } }, []);
+  const load = React.useCallback(async () => { setLoading(true); try { const { data, error: queryError } = await supabase.from('user_notifications').select('id,event_key,title,body,order_id,created_at,read_at').order('created_at', { ascending: false }).limit(100); if (queryError) throw queryError; setRows(data || []); setError(''); } catch (e) { setError(e.message || 'No se pudieron cargar las notificaciones.'); } finally { setLoading(false); } }, []);
   useEffect(() => { let active = true; Promise.resolve().then(() => { if (active) void load(); }); const channel = supabase.channel('notification-center').on('postgres_changes', { event: '*', schema: 'public', table: 'user_notifications' }, () => void load()).subscribe((status) => { if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setError(`Conexión de notificaciones fallida: ${status}`); }); return () => { active = false; void supabase.removeChannel(channel); }; }, [load]);
   const markRead = async (id) => { const { error: updateError } = await supabase.rpc('mark_notification_read', { p_id: id }); if (updateError) setError(updateError.message); else setRows((old) => old.map((row) => row.id === id ? { ...row, read_at: new Date().toISOString() } : row)); };
-  return <SafeAreaView style={{ flex: 1, padding: 16 }}><Text style={{ fontSize: 22, fontWeight: '800' }}>Notificaciones</Text>{loading ? <ActivityIndicator /> : error ? <Text accessibilityRole="alert">{error}</Text> : <ScrollView>{rows.map((row) => <Pressable key={row.id} onPress={async () => { await markRead(row.id); if (row.order_id) navigation.navigate('ClientOrders', { orderId: row.order_id }); }} style={{ padding: 12, borderBottomWidth: 1, borderColor: '#ddd', backgroundColor: row.read_at ? 'transparent' : '#F1F4FF' }}><Text style={{ fontWeight: '700' }}>{row.title}</Text><Text>{row.body}</Text><Text style={{ color: '#666', fontSize: 12 }}>{new Date(row.created_at).toLocaleString()}</Text></Pressable>)}</ScrollView>}</SafeAreaView>;
+  return <SafeAreaView style={{ flex: 1, padding: 16 }}><Text style={{ fontSize: 22, fontWeight: '800' }}>Notificaciones</Text>{loading ? <ActivityIndicator /> : error ? <Text accessibilityRole="alert">{error}</Text> : <ScrollView>{rows.map((row) => <Pressable key={row.id} onPress={async () => { await markRead(row.id); if (!row.order_id) return; if (role === 'negocio') navigation.navigate('BusinessHome', { screen: 'Orders' }); else if (role === 'repartidor') navigation.navigate('DriverHome'); else navigation.navigate('ClientOrders', { orderId: row.order_id }); }} style={{ padding: 12, borderBottomWidth: 1, borderColor: '#ddd', backgroundColor: row.read_at ? 'transparent' : '#F1F4FF' }}><Text style={{ fontWeight: '700' }}>{row.title}</Text><Text>{row.body}</Text><Text style={{ color: '#666', fontSize: 12 }}>{new Date(row.created_at).toLocaleString()}</Text></Pressable>)}</ScrollView>}</SafeAreaView>;
 }
 
 

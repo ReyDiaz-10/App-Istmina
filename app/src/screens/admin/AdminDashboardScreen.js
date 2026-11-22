@@ -245,6 +245,7 @@ export default function AdminDashboardScreen({ navigation }) {
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminFinance')}><Text style={[styles.link, { color: colors.primary }]}>Finanzas y retiros</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminActivity')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría en vivo</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminChatAudit')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría de chats</Text></Pressable>
+      <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminUsers')}><Text style={[styles.link, { color: colors.primary }]}>Usuarios y perfiles</Text></Pressable>
     </View>
     <HelpButton navigation={navigation} context="administración" compact />
     <Text style={[styles.subtitle, { color: colors.muted }]}>Indicadores acumulados de la plataforma</Text>

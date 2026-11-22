@@ -9,13 +9,37 @@ export const useAuthStore = create((set, get) => ({
   fetchProfile: async (userId) => {
     set({ loading: true });
     try {
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('profiles')
         .select('*')
         .eq('id', userId)
         .maybeSingle();
 
       if (error) throw error;
+
+      if (data?.status === 'bloqueado'
+        && data.account_blocked_until
+        && Date.parse(data.account_blocked_until) <= Date.now()) {
+        const { error: expiryError } = await supabase.rpc('expire_my_profile_block');
+        if (expiryError) throw expiryError;
+        const refreshed = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+        if (refreshed.error) throw refreshed.error;
+        data = refreshed.data;
+      }
+
+      if (data?.account_deactivated_at || data?.status === 'inactivo') {
+        throw new Error('Esta cuenta fue dada de baja definitivamente. Contacta al equipo de soporte.');
+      }
+      if (data?.status === 'bloqueado') {
+        const until = data.account_blocked_until
+          ? new Date(data.account_blocked_until).toLocaleString()
+          : 'por decisión administrativa';
+        throw new Error(`Esta cuenta está bloqueada hasta ${until}.`);
+      }
       
       if (!data) {
         console.log("No se encontró perfil, el usuario debe completar su registro.");
