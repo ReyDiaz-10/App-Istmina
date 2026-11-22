@@ -9,6 +9,8 @@ import { formatCOP } from '../../utils/formatters';
 import { getDriverDocumentUrl, getProfilePhotoUrl } from '../../services/onboardingMedia';
 import { isAdminRole } from '../../utils/roles';
 import { usePreferencesStore } from '../../store/preferencesStore';
+import { getEmailPreferences, setEmailPreferences } from '../../services/notifications';
+import NotificationBell from '../../components/NotificationBell';
 
 const Metric = ({ label, value }) => {
   const { colors } = useAppTheme();
@@ -25,6 +27,10 @@ export default function AdminDashboardScreen({ navigation }) {
   const [replies, setReplies] = useState({});
   const [reviewNotes, setReviewNotes] = useState({});
   const [reviewingKey, setReviewingKey] = useState(null);
+  const [loadError, setLoadError] = useState(null);
+  const [emailPreferences, setEmailPreferencesState] = useState({ profilePending: true, inappropriateLanguage: true, financialException: true, email: '' });
+  const [emailPrefError, setEmailPrefError] = useState('');
+  const [savingEmailPref, setSavingEmailPref] = useState(false);
   const [data, setData] = useState({
     users: 0,
     clients: 0,
@@ -45,6 +51,7 @@ export default function AdminDashboardScreen({ navigation }) {
   const load = useCallback(async () => {
     if (!isAdminRole(role)) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const [summary, tickets, pendingBusinesses, pendingDrivers, operational] = await Promise.all([
         supabase.rpc('admin_dashboard_summary'),
@@ -106,7 +113,12 @@ export default function AdminDashboardScreen({ navigation }) {
         operational: operational.data || { active_businesses: 0, drivers: 0, orders_by_area: [] },
       });
     } catch (error) {
-      Alert.alert('No se pudo cargar el panel', error.message);
+      const message = error?.message || 'Error desconocido al consultar Supabase.';
+      setLoadError(message);
+      Alert.alert(
+        'No se pudieron cargar los perfiles pendientes',
+        `${message}\n\nVerifica que el perfil tenga role = admin y que 0033_admin_profile_pending_visibility.sql esté aplicado.`,
+      );
     } finally { setLoading(false); }
   }, [role]);
 
@@ -114,6 +126,11 @@ export default function AdminDashboardScreen({ navigation }) {
     const timer = setTimeout(load, 0);
     return () => clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    if (!profile?.id || !isAdminRole(role)) return;
+    getEmailPreferences(profile.id).then(setEmailPreferencesState).catch((e) => setEmailPrefError(e.message || 'No se pudieron cargar preferencias.'));
+  }, [profile?.id, role]);
 
   useEffect(() => {
     if (!isAdminRole(role)) return undefined;
@@ -168,7 +185,37 @@ export default function AdminDashboardScreen({ navigation }) {
   if (loading) return <View style={[styles.center, { backgroundColor: colors.background }]}><ActivityIndicator size="large" color={colors.primary} /></View>;
 
   return <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}>
-    <View style={styles.top}><View><Text style={[styles.title, { color: colors.text }]}>Centro de control</Text><Text style={[styles.muted, { color: colors.muted }]}>Hola, {profile?.nickname || profile?.full_name || 'Administrador'}</Text></View><View style={styles.headerActions}><Pressable onPress={() => navigation.navigate('Profile')}><Text style={[styles.link, { color: colors.primary }]}>Mi perfil</Text></Pressable><Pressable onPress={() => navigation.navigate('Settings')}><Text style={[styles.link, { color: colors.primary }]}>Configuración</Text></Pressable><Pressable onPress={load}><Text style={[styles.link, { color: colors.primary }]}>Actualizar</Text></Pressable></View></View>
+    {loadError ? (
+      <View style={[styles.loadErrorCard, { borderColor: '#B42318', backgroundColor: '#FFF1F0' }]}>
+        <Text style={styles.loadErrorTitle}>No se pudo consultar la cola de perfiles pendientes</Text>
+        <Text style={styles.loadErrorText}>{loadError}</Text>
+        <Pressable accessibilityRole="button" onPress={load} style={styles.loadErrorRetry}>
+          <Text style={styles.loadErrorRetryText}>Reintentar</Text>
+        </Pressable>
+      </View>
+    ) : null}
+    <View style={styles.top}><View><Text style={[styles.title, { color: colors.text }]}>Centro de control</Text><Text style={[styles.muted, { color: colors.muted }]}>Hola, {profile?.nickname || profile?.full_name || 'Administrador'}</Text></View><View style={styles.headerActions}><NotificationBell navigation={navigation} compact /><Pressable onPress={() => navigation.navigate('Profile')}><Text style={[styles.link, { color: colors.primary }]}>Mi perfil</Text></Pressable><Pressable onPress={() => navigation.navigate('Settings')}><Text style={[styles.link, { color: colors.primary }]}>Configuración</Text></Pressable><Pressable onPress={load}><Text style={[styles.link, { color: colors.primary }]}>Actualizar</Text></Pressable></View></View>
+    <View style={[styles.reviewCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <Text style={[styles.rowTitle, { color: colors.text }]}>Alertas por correo</Text>
+      <Text style={[styles.muted, { color: colors.muted }]}>Selecciona los avisos que quieres recibir. Remitente: istmiyanotificaciones@gmail.com · Soporte: istmiyasoporte@gmail.com.</Text>
+      {emailPrefError ? <Text style={{ color: '#B42318' }}>{emailPrefError}</Text> : null}
+      <TextInput accessibilityLabel="Correo destinatario de alertas" autoCapitalize="none" keyboardType="email-address" placeholder="neildiazusb@gmail.com" value={emailPreferences.email} onChangeText={(email) => setEmailPreferencesState((v) => ({ ...v, email }))} style={[styles.replyInput, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} />
+      {[
+        ['profilePending', 'Perfiles pendientes de aprobación'],
+        ['inappropriateLanguage', 'Lenguaje inapropiado moderado en chat'],
+        ['financialException', 'Excepciones financieras y de retiro'],
+      ].map(([key, label]) => <Pressable key={key} accessibilityRole="checkbox" accessibilityState={{ checked: Boolean(emailPreferences[key]) }} onPress={() => setEmailPreferencesState((v) => ({ ...v, [key]: !v[key] }))}><Text style={{ color: colors.text, marginTop: 7 }}>{emailPreferences[key] ? '☑' : '☐'} {label}</Text></Pressable>)}
+      <Pressable disabled={savingEmailPref} onPress={async () => {
+        setSavingEmailPref(true); setEmailPrefError('');
+        try {
+          const email = emailPreferences.email.trim();
+          if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Ingresa un correo válido.');
+          await setEmailPreferences(profile.id, { ...emailPreferences, email });
+        }
+        catch (e) { setEmailPrefError(e.message || 'No se pudo guardar.'); }
+        finally { setSavingEmailPref(false); }
+      }}><Text style={[styles.link, { color: colors.primary }]}>{savingEmailPref ? 'Guardando…' : 'Guardar preferencias de correo'}</Text></Pressable>
+    </View>
     <View style={styles.adminLinks}>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminFinance')}><Text style={[styles.link, { color: colors.primary }]}>Finanzas y retiros</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminActivity')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría en vivo</Text></Pressable>
@@ -333,6 +380,11 @@ const ReviewActions = ({ onApprove, onReject, approveDisabled = false, disabled 
 const styles = StyleSheet.create({
   container: { padding: 18, backgroundColor: '#F5F7FA' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  loadErrorCard: { borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 14 },
+  loadErrorTitle: { color: '#7A271A', fontSize: 16, fontWeight: '800' },
+  loadErrorText: { color: '#912018', fontSize: 13, lineHeight: 20, marginTop: 6 },
+  loadErrorRetry: { alignSelf: 'flex-start', backgroundColor: '#912018', borderRadius: 8, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', marginTop: 10 },
+  loadErrorRetryText: { color: '#FFFFFF', fontWeight: '800' },
   top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   headerActions: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   adminLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 },

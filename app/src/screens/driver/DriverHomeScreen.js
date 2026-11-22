@@ -1,6 +1,7 @@
 import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/driver/DriverHomeScreen.js
 import React, { useCallback, useState, useEffect } from 'react';
+import NotificationBell from '../../components/NotificationBell';
 import {
   StyleSheet,
   View,
@@ -405,6 +406,7 @@ const DriverHomeScreen = ({ navigation }) => {
             </Text>
           </View>
         </View>
+        <NotificationBell navigation={navigation} compact />
         <View style={styles.availabilityControl}>
           <Text style={[styles.switchLabel, { color: colors.text }]}>
             {driverData?.is_available ? 'Desconectarme' : 'Ponerme en línea'}

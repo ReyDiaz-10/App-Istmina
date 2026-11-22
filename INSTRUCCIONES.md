@@ -1,5 +1,68 @@
 # Instrucciones de IstmiYa
 
+## Notificaciones persistentes y push (migración 0034)
+
+La arquitectura de la app es React Native con React Navigation. `useSimulatedPush.js` es un simulador y no forma parte del envío real. La bandeja vive en `user_notifications`; RLS permite a cada usuario leer solo sus propios avisos. Tokens Expo se guardan por usuario/dispositivo, y preferencias de correo solo se modifican mediante una RPC que valida el admin autenticado.
+
+### Aplicación en Supabase
+
+1. Revisa y valida en un proyecto descartable las migraciones anteriores `0001`–`0033`; no ejecutes esta migración en producción sin respaldo y revisión. La migración es `supabase/migrations/0034_persisted_notifications.sql`. Se puede copiar completa al SQL Editor de Supabase o aplicar con la CLI en el proyecto de prueba.
+2. Los criterios definidos son: perfil pendiente al insertar/cambiar a `pendiente` en `business_verifications` o `driver_verifications`; cliente nuevo al crear perfil `cliente`; lenguaje inapropiado únicamente cuando el moderador guarda `chats.moderation_status='bloqueado'`; excepción financiera al insertar `admin_financial_exception_reviews` o `driver_withdrawal_exceptions`; ingreso de repartidor al crear su asiento de `driver_wallet_entries` (entrega confirmada); ingreso de negocio al cambiar `business_settlement_items.status` a `paid`. No se envían texto de chat, domicilio, razón sensible ni datos de cobro.
+3. Avisos de pedido: al comercio cuando se confirma/pasa a `pagado`, al cliente al pasar a `preparando`, `listo_para_repartidor`/`repartidor_asignado`, `recogido` y `en_camino`; al asignar repartidor y a repartidores aprobados/disponibles cuando un pedido queda disponible. El ETA se calcula de `driver_arrival_eta_at` real; `pg_cron` revisa cada minuto una ventana de 2–4 minutos y la clave `order:<id>:eta:3m` impide repetirlo.
+4. Asegura que `pg_cron` esté instalado. La migración programa `istmiya-notification-eta`; configura manualmente el dispatch cada minuto (usa el HTTP de `pg_net` y guarda URL/token en Vault, nunca en texto de cron):
+
+```sql
+-- Modelo: crear secretos `notification_dispatch_url` y `notification_dispatch_secret` en Vault.
+-- Ajusta el nombre del job si ya existe; guarda solo la llamada, no secretos literales.
+select cron.schedule('istmiya-notification-dispatch', '* * * * *', $$
+  select net.http_post(
+    url := (select decrypted_secret from vault.decrypted_secrets where name='notification_dispatch_url'),
+    headers := jsonb_build_object('content-type','application/json','authorization',
+      'Bearer '||(select decrypted_secret from vault.decrypted_secrets where name='notification_dispatch_secret')),
+    body := '{}'::jsonb
+  );
+$$);
+```
+
+### Edge Functions y push
+
+Configura secrets de función sin copiarlos al repo ni al cliente (el valor del token debe ser aleatorio y privado):
+
+```powershell
+supabase secrets set NOTIFICATION_DISPATCH_SECRET="<token-aleatorio>"
+supabase functions deploy dispatch-notifications
+supabase functions deploy send-admin-notification-email
+```
+
+El gateway queda con `verify_jwt=false` únicamente para estas dos funciones porque el cron presenta un token aleatorio y no un JWT de usuario; dentro de cada función se valida `NOTIFICATION_DISPATCH_SECRET` antes de cualquier operación. EAS ya tiene `extra.eas.projectId`. Configura credenciales push de Android (FCM v1) e iOS (APNs) en EAS para el proyecto correcto. Para probar push nativo instala un development build o release build nuevo: Expo Go y la exportación web no validan el módulo push nativo. Android necesita canales y los usuarios pueden cambiar el sonido/canal en ajustes del sistema.
+
+Los seis archivos WAV de `app/assets/sounds/` se empaquetan en el plugin `expo-notifications`. Los sonidos personalizados se solicitan en el push y los canales Android por categoría. iOS puede sustituir sonidos no aceptados por el sonido predeterminado según límites del sistema; web no recibe este push nativo. En foreground el handler pide al sistema mostrar banner/lista y reproducir el sonido del push; no hay reproducción local adicional, para evitar doble alerta sonora.
+
+### Alertas de correo y SMTP Gmail
+
+El panel admin controla sus propios checks separados de perfiles pendientes, moderación y excepciones financieras; el destinatario editable es el correo de alertas (por defecto `neildiazusb@gmail.com`). El envío respeta el check de cada evento; los mensajes no incluyen detalles sensibles. Remitente fijo: `istmiyanotificaciones@gmail.com`; contacto de soporte: `istmiyasoporte@gmail.com` (no es remitente).
+
+Supabase Edge Runtime admite `fetch` HTTPS, pero no es un entorno apropiado para abrir una conexión SMTP TCP persistente. Por ello `send-admin-notification-email` llama un relay HTTPS backend en `services/smtp-relay` y no finge que Gmail SMTP directo funciona desde Edge. Despliega ese servicio detrás de HTTPS y configura únicamente en su gestor de secretos:
+
+```text
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=istmiyanotificaciones@gmail.com
+SMTP_PASS=<contraseña de aplicación Gmail>
+ADMIN_ALERT_EMAIL=neildiazusb@gmail.com
+ADMIN_ALERT_EMAIL_ALLOWLIST=neildiazusb@gmail.com,otro-admin@dominio.com
+SUPPORT_EMAIL=istmiyasoporte@gmail.com
+SMTP_RELAY_SECRET=<secreto aleatorio compartido>
+```
+
+En Supabase configura `SMTP_RELAY_URL` (URL HTTPS exacta `/send`), `SMTP_RELAY_SECRET` (mismo secreto), `ADMIN_ALERT_EMAIL`, `SUPPORT_EMAIL` y `NOTIFICATION_DISPATCH_SECRET`, además de secrets estándar. No incluyas esos valores en `.env`, el bundle, migraciones ni logs. Gmail requiere verificación en dos pasos y contraseña de aplicación; confirma límites/cuotas y entrega con el proveedor de correo. Para instalar el relay, instala dependencias dentro de `services/smtp-relay`, expón `/send` solo por HTTPS y restringe red entrante. El admin puede cambiar el destino en la UI; para admitir otro destino debe añadirse a `ADMIN_ALERT_EMAIL_ALLOWLIST` al desplegar relay.
+
+Errores de push se reintentan con espera creciente; tokens `DeviceNotRegistered` se desactivan. La bandeja persistida sigue disponible aunque push/email falle. Comprueba el log de Edge/relay y vuelve a intentar un aviso fallido tras corregir secretos.
+
+### Validación local y límites
+
+Pruebas focalizadas: `cd app; npm.cmd test -- tests/notifications.test.mjs`; lint dirigido: `npx.cmd expo lint --fix` no es necesario, usa `npx.cmd eslint App.js src/components/NotificationBell.js src/components/NotificationRuntime.js src/services/notifications.js src/screens/admin/AdminDashboardScreen.js src/screens/client/ClientHomeScreen.js src/screens/driver/DriverHomeScreen.js src/navigation/BusinessTabs.js`. Comprueba web con `npm.cmd run build:web`. SQL, trigger, cron, EAS credentials, SMS/SMTP externo y push real requieren el proyecto de prueba/credenciales y build nativo; no se validan con las pruebas locales.
+
 Guía para preparar el entorno local, configurar Supabase y Wompi, generar perfiles de prueba y desplegar la versión web.
 
 > **Importante:** no compartas ni subas llaves privadas, contraseñas ni archivos `.env`. Los pasos para pagos y pedidos requieren un proyecto de Supabase configurado y las migraciones/funciones desplegadas.
@@ -66,7 +129,7 @@ Revisa el estado de la base antes de aplicar cambios. Las migraciones en `supaba
 
 La migración inicial declara cada tipo una sola vez para permitir crear un sandbox vacío. No vuelvas a editar ni reaplicar migraciones que ya estén registradas en un entorno compartido o de producción. Las migraciones `0013`–`0019` agregan tarifas, administración, pagos a repartidores y auditoría de pedidos bloqueados, y enlazan el usuario administrador existente con el rol interno `admin`. Las migraciones `0020`–`0022` agregan estados de entrega, dirección y cancelaciones con reembolsos, enlaces de pago idempotentes y liquidaciones semanales de ventas a comercios. La `0023_catalog_delivery_reconciliation.sql` agrega inventario, variantes/extras, número de pedido único, códigos de recogida/entrega, memoria privada del domicilio, conciliación administrativa, expiración de pedidos impagos y límite de intentos de verificación. La `0024_fix_payout_cron_http_schema.sql` corrige la llamada del cron de liquidaciones a la extensión `pg_net`. La `0025_unify_user_roles.sql` migra los perfiles y las reglas administrativas heredadas al conjunto final de cuatro roles. La `0026`–`0029` agregan horarios, cancelación por negocio, inventario diferido, incidencias de entrega, ETA por rol y bloqueos cliente-repartidor. La `0030_delivery_order_feedback.sql` agrega comentarios y calificaciones ligados a pedidos entregados, impide duplicados por autor/categoría, deja las quejas privadas para quien las escribió y administración, limita la bandeja del repartidor a elogios y sugerencias, exige respuestas predefinidas y restringe su lectura y escritura del chat después del cierre. La `0031_business_wallet_transfers_driver_withdrawal_exceptions_and_pickup.sql` añade propuestas de transferencias internas entre negocios, excepciones de retiro, pickup y pausa por demanda; **esta migración sigue en revisión y no debe aplicarse en producción ni en proyectos compartidos**. La `0032_admin_profile_review.sql` agrega una RPC administrativa de revisión con nota/auditoría, activa el negocio al aprobarlo y publica las verificaciones para actualizar la cola en tiempo real; requiere validar todas las migraciones anteriores en un sandbox desechable. No consideres validada ninguna migración sin probarla en un proyecto desechable.
 
-La 0031 aún no ha sido aplicada ni validada en PostgreSQL/Supabase, y la 0032 tampoco se ha ejecutado. No se dispone aquí de un proyecto desechable confirmado, así que no configures credenciales, no ejecutes la suite financiera y no hagas `db push`. Primero crea un proyecto separado con datos y usuarios exclusivamente sintéticos, confirma que puede borrarse sin impacto, conecta explícitamente la CLI a ese proyecto y aplica allí las migraciones en orden. Verifica sintaxis, funciones, grants, RLS, triggers, estados y pruebas antes de actualizar la guía como validada. Nunca reutilices `.env.local`, credenciales de producción o un proyecto cuyo carácter descartable no esté confirmado.
+La 0031 aún no ha sido aplicada ni validada en PostgreSQL/Supabase, y las 0032–0033 tampoco se han ejecutado. No se dispone aquí de un proyecto desechable confirmado, así que no configures credenciales, no ejecutes la suite financiera y no hagas `db push`. Primero crea un proyecto separado con datos y usuarios exclusivamente sintéticos, confirma que puede borrarse sin impacto, conecta explícitamente la CLI a ese proyecto y aplica allí las migraciones en orden. La `0033_admin_profile_pending_visibility.sql` hace conciliación aditiva de registros huérfanos y restaura RLS administrativas; antes de aplicarla verifica que las migraciones 0006 y 0025 estén presentes. Verifica sintaxis, funciones, grants, RLS, triggers, estados y pruebas antes de actualizar la guía como validada. Nunca reutilices `.env.local`, credenciales de producción o un proyecto cuyo carácter descartable no esté confirmado.
 
 Validación local de esta revisión: `npm.cmd test` pasó (11 pruebas; la suite financiera opt-in quedó omitida) y `npm.cmd run build:web` terminó correctamente. El lint dirigido de las pantallas, servicios y pruebas de transferencias, payout y pickup pasó. `npm.cmd run lint` global sigue fallando (28 errores y 1 warning) en otros archivos del workspace, incluidos imports Expo no resueltos bajo `src/a_p_p` y diagnósticos existentes en pantallas y componentes auxiliares. No se ejecutó SQL, no se aplicó 0031, no se ejecutó la suite financiera y no se validó ningún flujo real de Wompi.
 

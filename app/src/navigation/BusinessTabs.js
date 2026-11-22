@@ -8,6 +8,7 @@ import BusinessOrdersScreen from '../screens/business/BusinessOrdersScreen';
 import BusinessCatalogScreen from '../screens/business/BusinessCatalogScreen';
 import BusinessSettlementsScreen from '../screens/business/BusinessSettlementsScreen';
 import { usePreferencesStore } from '../store/preferencesStore';
+import NotificationBell from '../components/NotificationBell';
 
 const Tab = createBottomTabNavigator();
 
@@ -17,7 +18,9 @@ export default function BusinessTabs() {
   return (
     <Tab.Navigator 
       screenOptions={{ 
-        headerShown: false,
+        headerShown: true,
+        headerRight: () => <NotificationBell compact />,
+        headerTitle: 'IstmiYa',
         tabBarStyle: { backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E0E0E0' },
         tabBarLabelStyle: { fontSize: 12 * (fontScale || 1) },
         tabBarActiveTintColor: '#1A237E',

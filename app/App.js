@@ -1,10 +1,11 @@
 import { AppText as Text } from './src/components/AppText.js';
 // app/App.js
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
+import * as Notifications from 'expo-notifications';
 import './src/services/liveKitSetup';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { ActivityIndicator, StyleSheet } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import LoginScreen from './src/screens/auth/LoginScreen';
@@ -31,12 +32,16 @@ import PrivacyScreen from './src/screens/client/PrivacyScreen';
 import AppSettingsScreen from './src/screens/client/AppSettingsScreen';
 import ClientProfileScreen from './src/screens/client/ClientProfileScreen';
 import BusinessWalletTransfersScreen from './src/screens/business/BusinessWalletTransfersScreen';
+import NotificationRuntime from './src/components/NotificationRuntime';
 
 import { useAuthStore } from './src/store/authStore';
 import { supabase, supabaseConfigError } from './src/api/supabaseClient';
 import { usePreferencesStore } from './src/store/preferencesStore';
 import { useAppTheme } from './src/hooks/useAppTheme';
 import { applyAppearancePreference } from './src/utils/appearance';
+
+Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }) });
+
 
 const Stack = createStackNavigator();
 
@@ -60,6 +65,7 @@ export default function App() {
   const appearance = usePreferencesStore((state) => state.appearance);
   const { mode, colors } = useAppTheme();
   const [initializing, setInitializing] = React.useState(true);
+  const navigationRef = useRef(null);
 
   useEffect(() => {
     applyAppearancePreference(appearance === 'system' ? 'system' : mode);
@@ -122,7 +128,8 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.appSafeArea} edges={['top', 'right', 'left']}>
-        <NavigationContainer theme={{ ...(mode === 'dark' ? DarkTheme : DefaultTheme), colors: { ...(mode === 'dark' ? DarkTheme.colors : DefaultTheme.colors), primary: colors.primary, background: colors.background, card: colors.surface, text: colors.text, border: colors.border } }}>
+        <NavigationContainer ref={navigationRef} theme={{ ...(mode === 'dark' ? DarkTheme : DefaultTheme), colors: { ...(mode === 'dark' ? DarkTheme.colors : DefaultTheme.colors), primary: colors.primary, background: colors.background, card: colors.surface, text: colors.text, border: colors.border } }}>
+        <NotificationRuntime navigationRef={navigationRef} />
         <Stack.Navigator 
           initialRouteName={getInitialRoute(user, useAuthStore.getState().profile)}
           screenOptions={{ 
@@ -147,6 +154,7 @@ export default function App() {
           <Stack.Screen name="AdminFinance" component={AdminFinanceScreen} />
           <Stack.Screen name="AdminActivity" component={AdminActivityScreen} />
           <Stack.Screen name="AdminChatAudit" component={AdminChatAuditScreen} />
+          <Stack.Screen name="Notifications" component={NotificationCenterScreen} />
           <Stack.Screen name="Support" component={SupportTickets} />
           <Stack.Screen name="About" component={AboutScreen} />
           <Stack.Screen name="Privacy" component={PrivacyScreen} />
@@ -159,6 +167,14 @@ export default function App() {
       </SafeAreaView>
     </SafeAreaProvider>
   );
+}
+
+function NotificationCenterScreen({ navigation }) {
+  const [rows, setRows] = React.useState([]); const [error, setError] = React.useState(''); const [loading, setLoading] = React.useState(true);
+  const load = React.useCallback(async () => { setLoading(true); try { const { data, error: queryError } = await supabase.from('user_notifications').select('id,title,body,order_id,created_at,read_at').order('created_at', { ascending: false }).limit(100); if (queryError) throw queryError; setRows(data || []); setError(''); } catch (e) { setError(e.message || 'No se pudieron cargar las notificaciones.'); } finally { setLoading(false); } }, []);
+  useEffect(() => { let active = true; Promise.resolve().then(() => { if (active) void load(); }); const channel = supabase.channel('notification-center').on('postgres_changes', { event: '*', schema: 'public', table: 'user_notifications' }, () => void load()).subscribe((status) => { if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setError(`Conexión de notificaciones fallida: ${status}`); }); return () => { active = false; void supabase.removeChannel(channel); }; }, [load]);
+  const markRead = async (id) => { const { error: updateError } = await supabase.rpc('mark_notification_read', { p_id: id }); if (updateError) setError(updateError.message); else setRows((old) => old.map((row) => row.id === id ? { ...row, read_at: new Date().toISOString() } : row)); };
+  return <SafeAreaView style={{ flex: 1, padding: 16 }}><Text style={{ fontSize: 22, fontWeight: '800' }}>Notificaciones</Text>{loading ? <ActivityIndicator /> : error ? <Text accessibilityRole="alert">{error}</Text> : <ScrollView>{rows.map((row) => <Pressable key={row.id} onPress={async () => { await markRead(row.id); if (row.order_id) navigation.navigate('ClientOrders', { orderId: row.order_id }); }} style={{ padding: 12, borderBottomWidth: 1, borderColor: '#ddd', backgroundColor: row.read_at ? 'transparent' : '#F1F4FF' }}><Text style={{ fontWeight: '700' }}>{row.title}</Text><Text>{row.body}</Text><Text style={{ color: '#666', fontSize: 12 }}>{new Date(row.created_at).toLocaleString()}</Text></Pressable>)}</ScrollView>}</SafeAreaView>;
 }
 
 

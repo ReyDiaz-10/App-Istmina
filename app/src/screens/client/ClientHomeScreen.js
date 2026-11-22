@@ -1,5 +1,6 @@
 import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 import React, { useEffect, useMemo, useState } from 'react';
+import NotificationBell from '../../components/NotificationBell';
 import {
   ActivityIndicator,
   FlatList,
@@ -131,6 +132,7 @@ const ClientHomeScreen = ({ navigation }) => {
           <Text style={[styles.brandSubtitle, { color: colors.text }]}>{t('home.tagline')}</Text>
           <Text style={[styles.marketLabel, { color: theme.primary }]}>{t('home.market')}</Text>
         </View>
+        {user ? <NotificationBell navigation={navigation} compact /> : null}
       </View>
       {displayName ? (
         <Text style={[styles.greeting, { color: colors.text }]}>{greeting}, {displayName}</Text>

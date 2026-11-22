@@ -433,3 +433,9 @@ verify_jwt = false
 
 [functions.wompi-payouts-webhook]
 verify_jwt = false
+
+[functions.dispatch-notifications]
+verify_jwt = false
+
+[functions.send-admin-notification-email]
+verify_jwt = false
