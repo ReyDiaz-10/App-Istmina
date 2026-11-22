@@ -7,7 +7,7 @@
     "icon": "./assets/images/istmiya-marketplace-icon.png",
     "userInterfaceStyle": "automatic",
     "plugins": [
-      ["expo-notifications", { "defaultChannel": "default", "sounds": ["./assets/sounds/order-new.wav", "./assets/sounds/order-available.wav", "./assets/sounds/review-pending.wav", "./assets/sounds/customer-registered.wav", "./assets/sounds/money-received.wav", "./assets/sounds/feedback.wav"] }],
+      ["expo-notifications", { "defaultChannel": "default", "sounds": ["./assets/sounds/order_new.wav", "./assets/sounds/order_available.wav", "./assets/sounds/review_pending.wav", "./assets/sounds/customer_registered.wav", "./assets/sounds/money_received.wav", "./assets/sounds/feedback.wav"] }],
       "@livekit/react-native-expo-plugin",
       "@config-plugins/react-native-webrtc",
       [

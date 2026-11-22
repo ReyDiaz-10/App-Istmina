@@ -5,11 +5,11 @@ import { AndroidImportance } from 'expo-notifications';
 import { supabase } from '../api/supabaseClient';
 
 export const SOUND_BY_EVENT = {
-  business_new_order: 'order-new.wav', order_available: 'order-available.wav',
-  profile_review_pending: 'review-pending.wav', customer_registered: 'customer-registered.wav',
-  money_received: 'money-received.wav', feedback_elogio: 'feedback.wav', feedback_sugerencia: 'feedback.wav',
+  business_new_order: 'order_new.wav', order_available: 'order_available.wav',
+  profile_review_pending: 'review_pending.wav', customer_registered: 'customer_registered.wav',
+  money_received: 'money_received.wav', feedback_elogio: 'feedback.wav', feedback_sugerencia: 'feedback.wav',
   order_preparing: 'default', order_ready: 'default', order_picked_up: 'default', order_on_the_way: 'default',
-  driver_assigned: 'default', order_arrival_soon: 'default', financial_exception: 'review-pending.wav', inappropriate_language: 'review-pending.wav',
+  driver_assigned: 'default', order_arrival_soon: 'default', financial_exception: 'review_pending.wav', inappropriate_language: 'review_pending.wav',
 };
 
 export function configureNotificationPresentation() {
@@ -33,8 +33,8 @@ export async function registerNotificationDevice(userId) {
   if (saveError) throw saveError;
   if (Platform.OS === 'android') {
     for (const [id, name, sound] of [
-      ['default', 'General', 'default'], ['orders', 'Pedidos', 'order-new'], ['available', 'Pedidos disponibles', 'order-available'],
-      ['admin', 'Revisión administrativa', 'review-pending'], ['money', 'Ingresos', 'money-received'],
+      ['default', 'General', 'default'], ['orders', 'Pedidos', 'order_new'], ['available', 'Pedidos disponibles', 'order_available'],
+      ['admin', 'Revisión administrativa', 'review_pending'], ['money', 'Ingresos', 'money_received'],
     ]) await Notifications.setNotificationChannelAsync(id, { name, importance: AndroidImportance.HIGH, sound });
   }
 }
