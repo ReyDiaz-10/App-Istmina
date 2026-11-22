@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
   const prefColumn = row.event_key === 'financial_exception' ? 'email_financial_exception' : row.event_key === 'inappropriate_language' ? 'email_inappropriate_language' : 'email_profile_pending';
   const {data: pref,error: preferenceError}=await db.from("notification_preferences").select(`email_enabled,${prefColumn},admin_alert_email`).eq("user_id",row.recipient_id).maybeSingle();
   if (preferenceError) return json({error:"email_preference_read_failed"},500);
-  if (pref?.[prefColumn] === false || (pref?.[prefColumn] == null && pref?.email_enabled === false)) return json({ ok:true, skipped:true });
+  if (pref?.email_enabled === false || pref?.[prefColumn] === false) return json({ ok:true, skipped:true });
   const {data: authData,error: authError}=await db.auth.admin.getUserById(row.recipient_id);
   const email=authData?.user?.email;
   if (authError || !email) return json({ error:"admin_email_unavailable" },409);

@@ -1,11 +1,11 @@
 import { AppText as Text } from './src/components/AppText.js';
 // app/App.js
 import React, { useEffect, useRef } from 'react';
-import * as Notifications from 'expo-notifications';
 import './src/services/liveKitSetup';
+import * as SplashScreen from 'expo-splash-screen';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import LoginScreen from './src/screens/auth/LoginScreen';
@@ -28,6 +28,7 @@ import AdminActivityScreen from './src/screens/admin/AdminActivityScreen';
 import AdminChatAuditScreen from './src/screens/admin/AdminChatAuditScreen';
 import AdminUsersScreen from './src/screens/admin/AdminUsersScreen';
 import AdminUserDetailsScreen from './src/screens/admin/AdminUserDetailsScreen';
+import AdminControlReportsScreen from './src/screens/admin/AdminControlReportsScreen';
 import SupportTickets from './src/screens/client/SupportTickets';
 import AboutScreen from './src/screens/client/AboutScreen';
 import PrivacyScreen from './src/screens/client/PrivacyScreen';
@@ -42,10 +43,13 @@ import { usePreferencesStore } from './src/store/preferencesStore';
 import { useAppTheme } from './src/hooks/useAppTheme';
 import { applyAppearancePreference } from './src/utils/appearance';
 
-Notifications.setNotificationHandler({ handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false }) });
-
-
 const Stack = createStackNavigator();
+
+if (Platform.OS !== 'web') {
+  SplashScreen.preventAutoHideAsync().catch((error) => {
+    console.warn('No se pudo mantener visible la pantalla de inicio:', error?.message);
+  });
+}
 
 const getInitialRoute = (user, profile) => {
   if (!user) return 'ClientHome';
@@ -72,6 +76,13 @@ export default function App() {
   useEffect(() => {
     applyAppearancePreference(appearance === 'system' ? 'system' : mode);
   }, [appearance, mode]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || (initializing && supabase && !supabaseConfigError)) return;
+    SplashScreen.hideAsync().catch((error) => {
+      console.warn('No se pudo ocultar la pantalla de inicio:', error?.message);
+    });
+  }, [initializing]);
 
   useEffect(() => {
     if (!supabase) return undefined;
@@ -121,6 +132,13 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={[styles.center, { backgroundColor: colors.background }]}>
+          <Image
+            source={require('./assets/images/istmiya-local-market-hero.jpg')}
+            accessibilityLabel="IstmiYa conecta el mercado local de Istmina"
+            accessible
+            resizeMode="contain"
+            style={styles.startupImage}
+          />
           <ActivityIndicator size="large" color={colors.primary} />
         </SafeAreaView>
       </SafeAreaProvider>
@@ -158,6 +176,7 @@ export default function App() {
           <Stack.Screen name="AdminChatAudit" component={AdminChatAuditScreen} />
           <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
           <Stack.Screen name="AdminUserDetails" component={AdminUserDetailsScreen} />
+          <Stack.Screen name="AdminControlReports" component={AdminControlReportsScreen} />
           <Stack.Screen name="Notifications" component={NotificationCenterScreen} />
           <Stack.Screen name="Support" component={SupportTickets} />
           <Stack.Screen name="About" component={AboutScreen} />
@@ -186,6 +205,7 @@ function NotificationCenterScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   appSafeArea: { flex: 1 },
+  startupImage: { width: '100%', maxWidth: 420, height: 300, marginBottom: 16 },
   center: { 
     flex: 1, 
     justifyContent: 'center', 

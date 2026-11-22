@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -11,6 +12,7 @@ import {
   Switch,
   View,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../api/supabaseClient';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { useAuthStore } from '../../store/authStore';
@@ -25,6 +27,8 @@ const EMPTY_PRODUCT = {
   inventory_enabled: false,
   stock_quantity: '',
   is_available: true,
+  image_url: null,
+  image_uri: null,
 };
 
 const EMPTY_OPTION = {
@@ -142,6 +146,8 @@ export default function BusinessCatalogScreen() {
       inventory_enabled: Boolean(product.inventory_enabled),
       stock_quantity: product.stock_quantity == null ? '' : String(product.stock_quantity),
       is_available: product.is_available !== false,
+      image_url: product.image_url || null,
+      image_uri: null,
     });
     setProductModal(true);
   };
@@ -167,7 +173,25 @@ export default function BusinessCatalogScreen() {
         inventory_enabled: productForm.inventory_enabled,
         stock_quantity: productForm.inventory_enabled ? stock : null,
         is_available: editingProduct ? editingProduct.is_available : productForm.is_available,
+        image_url: productForm.image_url || null,
       };
+      if (productForm.image_uri) {
+        if (!profile?.id) throw new Error('No se encontró la sesión del negocio para subir la foto.');
+        const response = await fetch(productForm.image_uri);
+        if (!response.ok) throw new Error('No se pudo leer la foto seleccionada.');
+        const blob = await response.blob();
+        const contentType = blob.type || 'image/jpeg';
+        const extension = contentType.split('/')[1]?.replace('jpeg', 'jpg') || 'jpg';
+        const imagePath = `${profile.id}/product-${Date.now()}.${extension}`;
+        const { error: uploadError } = await supabase.storage
+          .from('business-images')
+          .upload(imagePath, blob, { contentType, upsert: false });
+        if (uploadError) throw uploadError;
+        const { data: { publicUrl } } = supabase.storage
+          .from('business-images')
+          .getPublicUrl(imagePath);
+        values.image_url = publicUrl;
+      }
       const query = editingProduct
         ? supabase.from('products').update(values).eq('id', editingProduct.id).eq('business_id', businessId)
         : supabase.from('products').insert({ ...values, business_id: businessId });
@@ -307,6 +331,24 @@ export default function BusinessCatalogScreen() {
     ]);
   };
 
+  const pickProductImage = async () => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.75,
+      });
+      if (result.canceled) return;
+      setProductForm((current) => ({
+        ...current,
+        image_uri: result.assets?.[0]?.uri || null,
+      }));
+    } catch (error) {
+      Alert.alert('No se pudo seleccionar la foto', error.message);
+    }
+  };
+
   const styles = createStyles();
   const groupedAvailabilityRequests = availabilityRequests.reduce((groups, request) => {
     const current = groups[request.product_id] || {
@@ -422,6 +464,14 @@ export default function BusinessCatalogScreen() {
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalScroll}>
             <View style={[styles.modal, { backgroundColor: colors.surface }]}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{editingProduct ? 'Editar producto' : 'Nuevo producto'}</Text>
+              <Pressable accessibilityRole="button" onPress={pickProductImage} style={[styles.imagePicker, { borderColor: colors.border }]}>
+                {(productForm.image_uri || productForm.image_url) ? (
+                  <Image source={{ uri: productForm.image_uri || productForm.image_url }} style={styles.productImagePreview} resizeMode="cover" />
+                ) : null}
+                <Text style={{ color: colors.primary, fontWeight: '700' }}>
+                  {productForm.image_uri || productForm.image_url ? 'Cambiar foto del producto' : 'Agregar foto del producto'}
+                </Text>
+              </Pressable>
               <TextInput value={productForm.name} onChangeText={(name) => setProductForm((current) => ({ ...current, name }))} placeholder="Nombre" placeholderTextColor={colors.muted} style={styles.input} maxLength={120} />
               <TextInput value={productForm.description} onChangeText={(description) => setProductForm((current) => ({ ...current, description }))} placeholder="Descripción" placeholderTextColor={colors.muted} style={[styles.input, styles.multiline]} multiline maxLength={500} />
               <TextInput value={productForm.category} onChangeText={(category) => setProductForm((current) => ({ ...current, category }))} placeholder="Categoría (p. ej. Comida, Postres)" placeholderTextColor={colors.muted} style={styles.input} maxLength={60} />
@@ -496,6 +546,8 @@ const createStyles = () => StyleSheet.create({
   modal: { borderRadius: 16, padding: 18, gap: 10 },
   modalTitle: { fontSize: 19, fontWeight: '800', marginBottom: 2 },
   input: { borderWidth: 1, borderColor: '#D5D7DD', borderRadius: 9, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, color: '#222222' },
+  imagePicker: { minHeight: 88, borderWidth: 1, borderRadius: 9, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  productImagePreview: { width: 68, height: 68, borderRadius: 8, backgroundColor: '#E7EAF2' },
   multiline: { minHeight: 70, textAlignVertical: 'top' },
   switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   typeRow: { flexDirection: 'row', gap: 10 },

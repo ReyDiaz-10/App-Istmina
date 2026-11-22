@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { supabase } from '../api/supabaseClient';
+import { unregisterNotificationDevice } from '../services/notifications';
 
 export const useAuthStore = create((set, get) => ({
   user: null,          
@@ -230,6 +231,8 @@ export const useAuthStore = create((set, get) => ({
       } catch (auditError) {
         console.warn('No se pudo registrar el cierre de sesión:', auditError.message);
       }
+      try { await unregisterNotificationDevice(); }
+      catch (deviceError) { console.warn('No se pudo retirar el token push de esta sesiÃ³n:', deviceError.message); }
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
 

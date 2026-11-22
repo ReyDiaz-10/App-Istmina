@@ -1,10 +1,22 @@
 import { AppText as Text } from './AppText.js';
 import React, { useEffect, useRef, useState } from 'react';
-import { FlatList, Image, StyleSheet, View, useWindowDimensions } from 'react-native';
+import {
+  FlatList,
+  ImageBackground,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { supabase } from '../api/supabaseClient';
 
+const FALLBACK_SLIDES = [
+  { id: 'brand-local', title: 'Lo mejor de Istmina', subtitle: 'El mercado local, en un clic.' },
+  { id: 'brand-discover', title: 'Descubre negocios locales', subtitle: 'Encuentra productos cerca de ti.' },
+  { id: 'brand-order', title: 'IstmiYa', subtitle: 'Compra local. Recibe en casa.' },
+];
+
 const PromoCarousel = () => {
-  const [banners, setBanners] = useState([]);
+  const [slides, setSlides] = useState(FALLBACK_SLIDES);
   const listRef = useRef(null);
   const currentIndex = useRef(0);
   const { width: screenWidth } = useWindowDimensions();
@@ -13,22 +25,82 @@ const PromoCarousel = () => {
   useEffect(() => {
     let active = true;
 
-    const fetchActiveBanners = async () => {
+    const fetchPromotionalSlides = async () => {
       try {
-        const { data, error } = await supabase
-          .from('banners')
-          .select('*, businesses(subscriptions(is_active))')
+        // Colombia uses UTC-5 year-round; evaluate subscription dates in the app's market timezone.
+        const today = new Date(Date.now() - (5 * 60 * 60 * 1000)).toISOString().slice(0, 10);
+        const { data: subscriptions, error: subscriptionsError } = await supabase
+          .from('subscriptions')
+          .select('business_id')
           .eq('is_active', true)
-          .eq('businesses.subscriptions.is_active', true);
+          .lte('start_date', today)
+          .gte('end_date', today);
+        if (subscriptionsError) throw subscriptionsError;
 
-        if (error) throw error;
-        if (active) setBanners(data || []);
+        const subscribedIds = [...new Set((subscriptions || []).map((item) => item.business_id).filter(Boolean))];
+        if (!subscribedIds.length) return;
+
+        const { data: businesses, error: businessesError } = await supabase
+          .from('businesses')
+          .select('id, store_name')
+          .eq('status', 'activo')
+          .in('id', subscribedIds);
+        if (businessesError) throw businessesError;
+
+        const eligibleBusinesses = businesses || [];
+        const eligibleIds = eligibleBusinesses.map((business) => business.id);
+        if (!eligibleIds.length) return;
+
+        const [bannerResult, productResult] = await Promise.all([
+          supabase
+            .from('banners')
+            .select('id, business_id, title, image_url')
+            .eq('is_active', true)
+            .in('business_id', eligibleIds),
+          supabase
+            .from('products')
+            .select('id, business_id, name, image_url, is_available, inventory_enabled, stock_quantity')
+            .in('business_id', eligibleIds)
+            .not('image_url', 'is', null)
+            .limit(24),
+        ]);
+        if (bannerResult.error) throw bannerResult.error;
+        if (productResult.error) throw productResult.error;
+
+        const businessNames = new Map(eligibleBusinesses.map((business) => [business.id, business.store_name]));
+        const bannerSlides = (bannerResult.data || [])
+          .filter((banner) => banner.image_url)
+          .map((banner) => ({
+            id: `banner-${banner.id}`,
+            image_url: banner.image_url,
+            title: banner.title || businessNames.get(banner.business_id) || 'Promoción local',
+            subtitle: businessNames.get(banner.business_id) || 'Negocio local de Istmina',
+          }));
+        const productSlides = (productResult.data || [])
+          .filter((product) => (
+            product.image_url
+            && product.is_available !== false
+            && (!product.inventory_enabled
+              || Number(product.stock_quantity || 0) > 0)
+          ))
+          .map((product) => ({
+            id: `product-${product.id}`,
+            image_url: product.image_url,
+            title: product.name,
+            subtitle: businessNames.get(product.business_id) || 'Negocio local de Istmina',
+          }));
+        const imageSlides = [...bannerSlides, ...productSlides]
+          .filter((slide, index, all) => all.findIndex((item) => item.image_url === slide.image_url) === index);
+
+        if (active && imageSlides.length) {
+          setSlides([...imageSlides, ...FALLBACK_SLIDES]);
+        }
       } catch (error) {
-        console.error('Error cargando banners promocionales:', error.message);
+        console.warn('Error cargando promociones e imágenes de productos:', error.message);
       }
     };
 
-    fetchActiveBanners();
+    fetchPromotionalSlides();
     return () => {
       active = false;
     };
@@ -36,10 +108,9 @@ const PromoCarousel = () => {
 
   useEffect(() => {
     currentIndex.current = 0;
-    if (banners.length < 2) return undefined;
-
+    listRef.current?.scrollToOffset({ offset: 0, animated: false });
     const timer = setInterval(() => {
-      currentIndex.current = (currentIndex.current + 1) % banners.length;
+      currentIndex.current = (currentIndex.current + 1) % slides.length;
       listRef.current?.scrollToOffset({
         offset: currentIndex.current * itemWidth,
         animated: true,
@@ -47,74 +118,70 @@ const PromoCarousel = () => {
     }, 5000);
 
     return () => clearInterval(timer);
-  }, [banners, itemWidth]);
+  }, [slides.length, itemWidth]);
 
   return (
     <View style={styles.container}>
-      {banners.length > 0 ? (
-        <FlatList
-          ref={listRef}
-          data={banners}
-          horizontal
-          pagingEnabled
-          showsHorizontalScrollIndicator={false}
-          keyExtractor={(item) => item.id}
-          getItemLayout={(_, index) => ({
-            length: itemWidth,
-            offset: itemWidth * index,
-            index,
-          })}
-          onMomentumScrollEnd={(event) => {
-            currentIndex.current = Math.round(
-              event.nativeEvent.contentOffset.x / itemWidth,
-            );
-          }}
-          renderItem={({ item }) => (
-            <Image
-              source={{ uri: item.image_url }}
-              style={[styles.bannerImage, { width: itemWidth }]}
-              resizeMode="cover"
-              accessibilityLabel={item.title || 'Banner promocional'}
-            />
-          )}
-        />
-      ) : (
-        <View style={[styles.emptyBanner, { width: itemWidth }]}>
-          <Text style={styles.emptyTitle}>Promociones locales</Text>
-          <Text style={styles.emptyText}>Descubre negocios y ofertas de Istmina.</Text>
-        </View>
-      )}
+      <FlatList
+        ref={listRef}
+        data={slides}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        keyExtractor={(item) => item.id}
+        getItemLayout={(_, index) => ({
+          length: itemWidth,
+          offset: itemWidth * index,
+          index,
+        })}
+        onMomentumScrollEnd={(event) => {
+          currentIndex.current = Math.min(
+            slides.length - 1,
+            Math.max(0, Math.round(event.nativeEvent.contentOffset.x / itemWidth)),
+          );
+        }}
+        renderItem={({ item }) => (
+          <ImageBackground
+            source={item.image_url
+              ? { uri: item.image_url }
+              : require('../../assets/images/istmiya-local-market-hero.jpg')}
+            style={[styles.banner, { width: itemWidth }]}
+            imageStyle={styles.bannerImage}
+            resizeMode="cover"
+            accessibilityLabel={`${item.title}. ${item.subtitle}`}
+          >
+            <View style={styles.caption}>
+              <Text style={styles.title}>{item.title}</Text>
+              <Text style={styles.subtitle}>{item.subtitle}</Text>
+            </View>
+          </ImageBackground>
+        )}
+      />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    height: 140,
+    height: 156,
     marginVertical: 10,
     alignItems: 'center',
   },
-  bannerImage: {
-    height: 140,
-    borderRadius: 14,
-  },
-  emptyBanner: {
-    height: 140,
-    justifyContent: 'center',
-    paddingHorizontal: 24,
+  banner: {
+    height: 156,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
     borderRadius: 14,
     backgroundColor: '#FFF0DF',
   },
-  emptyTitle: {
-    color: '#A64B00',
-    fontSize: 20,
-    fontWeight: '800',
+  bannerImage: { borderRadius: 14 },
+  caption: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: 'rgba(27, 22, 18, 0.66)',
   },
-  emptyText: {
-    color: '#694326',
-    fontSize: 14,
-    marginTop: 6,
-  },
+  title: { color: '#FFFFFF', fontSize: 19, fontWeight: '800' },
+  subtitle: { color: '#FFFFFF', fontSize: 13, marginTop: 4 },
 });
 
 export default PromoCarousel;

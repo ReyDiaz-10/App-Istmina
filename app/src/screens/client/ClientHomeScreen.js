@@ -16,7 +16,7 @@ import PromoCarousel from '../../components/PromoCarousel';
 import { useRoleTheme } from '../../hooks/useRoleTheme';
 import { useAuthStore } from '../../store/authStore';
 import { useAppTheme } from '../../hooks/useAppTheme';
-import MarketplaceBrand from '../../components/MarketplaceBrand';
+import MarketplaceWordmark from '../../components/MarketplaceWordmark';
 import { useTranslation } from '../../hooks/useTranslation';
 import { usePreferencesStore } from '../../store/preferencesStore';
 import { filterBusinesses } from '../../utils/marketplaceFilters.mjs';
@@ -31,6 +31,8 @@ const CATEGORIES = [
 
 const ClientHomeScreen = ({ navigation }) => {
   const [businesses, setBusinesses] = useState([]);
+  const [popularBusinesses, setPopularBusinesses] = useState([]);
+  const [failedBusinessImages, setFailedBusinessImages] = useState({});
   const [loading, setLoading] = useState(true);
   const [category, setCategory] = useState('Todos');
   const [searchText, setSearchText] = useState('');
@@ -68,6 +70,16 @@ const ClientHomeScreen = ({ navigation }) => {
             && (!product.inventory_enabled || Number(product.stock_quantity) > 0)
           )),
         })));
+
+        const { data: popularData, error: popularError } = await supabase.rpc(
+          'get_home_popular_businesses',
+          { p_limit: 5 },
+        );
+        if (popularError) {
+          console.warn('No se pudieron cargar los negocios populares:', popularError.message);
+        } else {
+          setPopularBusinesses(popularData || []);
+        }
       } catch (error) {
         console.error('No se pudieron cargar los negocios:', error.message);
       } finally {
@@ -93,12 +105,19 @@ const ClientHomeScreen = ({ navigation }) => {
   };
 
   const renderBusinessCard = ({ item }) => {
-    const imageUrl = item.products?.find((product) => product.image_url)?.image_url;
+    const productImageUrls = (item.products || []).map((product) => product.image_url);
+    const imageCandidates = [...new Set([
+      ...productImageUrls,
+      item.product_image_url,
+      item.store_image_url,
+    ].filter(Boolean))];
+    const failedImages = failedBusinessImages[item.id] || [];
+    const imageUrl = imageCandidates.find((url) => !failedImages.includes(url));
 
     return (
       <TouchableOpacity
         accessibilityRole="button"
-      style={[styles.card, { backgroundColor: colors.surface }]}
+        style={[styles.card, { backgroundColor: colors.surface }]}
         onPress={() =>
           navigation.navigate('StoreDetail', {
             businessId: item.id,
@@ -107,7 +126,16 @@ const ClientHomeScreen = ({ navigation }) => {
         }
       >
         {imageUrl ? (
-          <Image source={{ uri: imageUrl }} style={styles.cardImage} resizeMode="cover" />
+          <Image
+            key={`${item.id}:${imageUrl}`}
+            source={{ uri: imageUrl }}
+            style={styles.cardImage}
+            resizeMode="cover"
+            onError={() => setFailedBusinessImages((current) => ({
+              ...current,
+              [item.id]: [...new Set([...(current[item.id] || []), imageUrl])],
+            }))}
+          />
         ) : (
           <View style={[styles.cardImage, styles.imagePlaceholder]}>
             <Text style={styles.placeholderIcon}>🍽️</Text>
@@ -118,6 +146,11 @@ const ClientHomeScreen = ({ navigation }) => {
           <Text style={[styles.storeInfo, { color: colors.muted }]}>
             ⏱️ {item.prep_time_t} min • {item.address}
           </Text>
+          {item.order_count !== undefined ? (
+            <Text style={[styles.popularOrderCount, { color: theme.primary }]}>
+              {item.order_count} {isEnglish ? 'orders' : 'pedidos'}
+            </Text>
+          ) : null}
         </View>
       </TouchableOpacity>
     );
@@ -126,9 +159,8 @@ const ClientHomeScreen = ({ navigation }) => {
   const listHeader = (
     <View>
       <View style={styles.brandHeader}>
-        <MarketplaceBrand size={72} />
         <View style={styles.brandCopy}>
-          <Text style={[styles.brandName, { color: colors.text }]}>IstmiYa</Text>
+          <MarketplaceWordmark width={178} />
           <Text style={[styles.brandSubtitle, { color: colors.text }]}>{t('home.tagline')}</Text>
           <Text style={[styles.marketLabel, { color: theme.primary }]}>{t('home.market')}</Text>
         </View>
@@ -163,6 +195,13 @@ const ClientHomeScreen = ({ navigation }) => {
         <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('home.help')} style={styles.quickLink} onPress={() => navigation.navigate('Support', { context: 'general' })}><Text style={[styles.quickLinkText, { color: theme.primary }]}>{t('home.help')}</Text></TouchableOpacity>
         {user && <TouchableOpacity accessibilityRole="button" accessibilityLabel={t('home.logout')} style={styles.quickLink} onPress={handleSessionButton}><Text style={[styles.quickLinkText, { color: theme.primary }]}>{t('home.logout')}</Text></TouchableOpacity>}
       </View>
+      <Image
+        source={require('../../../assets/images/istmiya-local-market-hero.jpg')}
+        accessibilityLabel="IstmiYa conecta el mercado local de Istmina con sus clientes"
+        accessible
+        resizeMode="contain"
+        style={styles.marketHero}
+      />
       {user?.user_metadata?.role && user.user_metadata.role !== 'cliente' && (
         <TouchableOpacity accessibilityRole="button" style={styles.quickLink} onPress={() => navigation.navigate('About')}>
           <Text style={[styles.quickLinkText, { color: theme.primary }]}>{t('home.about')}</Text>
@@ -184,6 +223,18 @@ const ClientHomeScreen = ({ navigation }) => {
         <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('home.promotions')}</Text>
         <PromoCarousel />
       </View>
+      {popularBusinesses.length > 0 ? (
+        <View style={styles.popularSection}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
+            {isEnglish ? 'Popular in Istmina' : 'Populares en Istmina'}
+          </Text>
+          {popularBusinesses.map((business) => (
+            <View key={`popular-${business.id}`}>
+              {renderBusinessCard({ item: business })}
+            </View>
+          ))}
+        </View>
+      ) : null}
       <View style={styles.categoryContainer}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('home.categories')}</Text>
         <ScrollView
@@ -257,10 +308,19 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
-  brandCopy: { flex: 1, minWidth: 145 },
-  brandName: { fontSize: 25, fontWeight: '800' },
-  brandSubtitle: { fontSize: 19, lineHeight: 24, fontWeight: '800', marginTop: 1 },
+  brandCopy: { flex: 1, minWidth: 0 },
+  brandSubtitle: { fontSize: 13, lineHeight: 18, fontWeight: '800', marginTop: 5 },
   marketLabel: { fontSize: 9, lineHeight: 13, fontWeight: '800', letterSpacing: 0.7, marginTop: 4 },
+  marketHero: {
+    width: '100%',
+    maxWidth: 520,
+    height: 260,
+    alignSelf: 'center',
+    marginTop: 8,
+    marginBottom: 4,
+    borderRadius: 14,
+    backgroundColor: '#FFF4E2',
+  },
   greeting: { marginHorizontal: 20, marginTop: 16, fontSize: 25, lineHeight: 32, fontWeight: '800' },
   loginCta: { alignSelf: 'stretch', marginHorizontal: 20, marginTop: 14 },
   loginCtaSurface: { width: '100%', minHeight: 48 },
@@ -277,6 +337,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   promoSection: { paddingTop: 18 },
+  popularSection: { paddingTop: 12 },
   sectionTitle: {
     paddingHorizontal: 20,
     color: '#252525',
@@ -299,6 +360,7 @@ const styles = StyleSheet.create({
   categoryTextActive: { color: '#FFFFFF' },
   card: {
     backgroundColor: '#FFFFFF',
+    minHeight: 120,
     borderRadius: 15,
     marginHorizontal: 20,
     marginBottom: 16,
@@ -308,13 +370,16 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 5,
     shadowOffset: { width: 0, height: 2 },
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  cardImage: { width: '100%', height: 170 },
+  cardImage: { width: 112, height: 112, margin: 4, borderRadius: 12 },
   imagePlaceholder: { backgroundColor: '#E7EAF2', alignItems: 'center', justifyContent: 'center' },
-  placeholderIcon: { fontSize: 42 },
-  cardContent: { padding: 15 },
+  placeholderIcon: { fontSize: 30 },
+  cardContent: { flex: 1, minWidth: 0, paddingHorizontal: 12, paddingVertical: 14 },
   storeName: { fontSize: 18, fontWeight: 'bold', color: '#1A237E' },
   storeInfo: { fontSize: 14, color: '#757575', marginTop: 5 },
+  popularOrderCount: { fontSize: 12, fontWeight: '700', marginTop: 6 },
   loader: { marginTop: 50 },
   emptyText: { textAlign: 'center', marginTop: 28, color: '#757575', fontSize: 16 },
 });

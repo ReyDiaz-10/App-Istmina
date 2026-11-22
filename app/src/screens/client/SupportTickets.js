@@ -1,6 +1,6 @@
 import { AppText as Text, AppTextInput as TextInput } from '../../components/AppText.js';
 // app/src/screens/client/SupportTickets.js
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, View, TouchableOpacity, Alert, ScrollView, ActivityIndicator } from 'react-native';
 import { supabase } from '../../api/supabaseClient';
 import { useAuthStore } from '../../store/authStore';
@@ -14,17 +14,45 @@ const SupportTickets = ({ route, navigation }) => {
   const [loading, setLoading] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [loadingTickets, setLoadingTickets] = useState(true);
+  const [ticketLoadError, setTicketLoadError] = useState('');
   const context = route?.params?.context;
+
+  const loadTickets = useCallback(async (userId = profile?.id) => {
+    if (!userId) return;
+    setLoadingTickets(true);
+    setTicketLoadError('');
+    try {
+      const { data, error } = await supabase.from('support_tickets')
+        .select('id, subject, category, status, admin_reply, created_at')
+        .eq('requester_id', userId).order('created_at', { ascending: false }).limit(20);
+      if (error) throw error;
+      const rows = data || [];
+      const eventResult = rows.length
+        ? await supabase.from('support_ticket_events')
+          .select('id,ticket_id,event_type,detail,created_at')
+          .in('ticket_id', rows.map((ticket) => ticket.id))
+          .order('created_at', { ascending: false })
+        : { data: [], error: null };
+      if (eventResult.error) throw eventResult.error;
+      const events = new Map();
+      for (const event of eventResult.data || []) {
+        const current = events.get(event.ticket_id) || [];
+        if (current.length < 8) current.push(event);
+        events.set(event.ticket_id, current);
+      }
+      setTickets(rows.map((ticket) => ({ ...ticket, events: events.get(ticket.id) || [] })));
+    } catch (error) {
+      setTicketLoadError(error?.message || 'No se pudo cargar el historial de solicitudes.');
+    } finally {
+      setLoadingTickets(false);
+    }
+  }, [profile?.id]);
 
   useEffect(() => {
     if (!profile?.id) return;
-    supabase.from('support_tickets').select('id, subject, category, status, admin_reply, created_at')
-      .eq('requester_id', profile.id).order('created_at', { ascending: false }).limit(20)
-      .then(({ data, error }) => {
-        if (!error) setTickets(data || []);
-        setLoadingTickets(false);
-      });
-  }, [profile?.id]);
+    const timer = setTimeout(() => { void loadTickets(profile.id); }, 0);
+    return () => clearTimeout(timer);
+  }, [loadTickets, profile?.id]);
 
   const sendTicket = async () => {
     if (!profile?.id) {
@@ -65,8 +93,7 @@ const SupportTickets = ({ route, navigation }) => {
       }
       Alert.alert(confirmationTitle, confirmationMessage);
       setForm({ subject: '', message: '', type: context ? 'soporte' : 'sugerencia' });
-      const { data: currentTickets } = await supabase.from('support_tickets').select('id, subject, category, status, admin_reply, created_at').eq('requester_id', profile.id).order('created_at', { ascending: false }).limit(20);
-      setTickets(currentTickets || []);
+      await loadTickets(profile.id);
     } catch (error) {
       Alert.alert('Error', error.message);
     } finally {
@@ -123,10 +150,14 @@ const SupportTickets = ({ route, navigation }) => {
       </View>
       {profile?.id && <View style={styles.requests}>
         <Text style={[styles.label, { color: colors.text }]}>Mis solicitudes</Text>
-        {loadingTickets ? <ActivityIndicator color={colors.primary} /> : tickets.length === 0 ? <Text style={[styles.subtitle, { color: colors.muted }]}>Aún no tienes solicitudes.</Text> : tickets.map((ticket) => <View key={ticket.id} style={[styles.ticket, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        {loadingTickets ? <ActivityIndicator color={colors.primary} /> : ticketLoadError ? <Text accessibilityRole="alert" style={[styles.subtitle, { color: colors.danger || '#B3261E' }]}>{ticketLoadError}</Text> : tickets.length === 0 ? <Text style={[styles.subtitle, { color: colors.muted }]}>Aún no tienes solicitudes.</Text> : tickets.map((ticket) => <View key={ticket.id} style={[styles.ticket, { backgroundColor: colors.surface, borderColor: colors.border }]}>
           <Text style={[styles.ticketTitle, { color: colors.text }]}>{ticket.subject}</Text>
           <Text style={[styles.subtitle, { color: colors.muted }]}>{ticket.category} · {ticket.status}</Text>
           {ticket.admin_reply ? <Text style={[styles.reply, { color: colors.primary }]}>Respuesta de IstmiYa: {ticket.admin_reply}</Text> : <Text style={[styles.subtitle, { color: colors.muted }]}>El equipo aún no ha respondido.</Text>}
+          {ticket.events?.length ? <View style={styles.timeline}><Text style={[styles.timelineTitle, { color: colors.text }]}>Historial</Text>{ticket.events.map((event) => <View key={event.id} style={styles.timelineItem}>
+            <Text style={[styles.subtitle, { color: colors.muted }]}>{event.event_type.replaceAll('_', ' ')} · {new Date(event.created_at).toLocaleString('es-CO')}</Text>
+            {event.detail?.reply ? <Text style={[styles.subtitle, { color: colors.text }]}>{event.detail.reply}</Text> : null}
+          </View>)}</View> : null}
         </View>)}
       </View>}
     </ScrollView>
@@ -152,6 +183,9 @@ const styles = StyleSheet.create({
   ticket: { borderWidth: 1, borderRadius: 12, padding: 14, marginTop: 10 },
   ticketTitle: { fontWeight: '700' },
   reply: { marginTop: 8, lineHeight: 20 },
+  timeline: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#66708555', marginTop: 10, paddingTop: 8 },
+  timelineTitle: { fontWeight: '700', marginBottom: 3 },
+  timelineItem: { marginTop: 4 },
 });
 
 export default SupportTickets;

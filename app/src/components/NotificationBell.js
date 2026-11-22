@@ -3,18 +3,17 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'reac
 import { useNavigation } from '@react-navigation/native';
 import { AppText as Text } from './AppText.js';
 import { supabase } from '../api/supabaseClient';
-import { listNotifications, markNotificationRead } from '../services/notifications';
+import { getUnreadNotificationCount, listNotifications, markNotificationRead } from '../services/notifications';
 
 export default function NotificationBell({ navigation, compact = false }) {
   const parentNavigation = useNavigation();
   const nav = navigation || parentNavigation;
-  const [items, setItems] = useState([]); const [open, setOpen] = useState(false); const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
-  const load = useCallback(async () => { setLoading(true); setError(''); try { setItems(await listNotifications()); } catch (e) { setError(e.message || 'No se pudieron cargar notificaciones.'); } finally { setLoading(false); } }, []);
+  const [items, setItems] = useState([]); const [unreadCount, setUnreadCount] = useState(0); const [open, setOpen] = useState(false); const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
+  const load = useCallback(async () => { setLoading(true); setError(''); try { const [nextItems, count] = await Promise.all([listNotifications(), getUnreadNotificationCount()]); setItems(nextItems); setUnreadCount(count); } catch (e) { setError(e.message || 'No se pudieron cargar notificaciones.'); } finally { setLoading(false); } }, []);
   useEffect(() => { let active = true; Promise.resolve().then(() => { if (active) void load(); }); const ch = supabase.channel('my-notifications').on('postgres_changes', { event: '*', schema: 'public', table: 'user_notifications' }, () => { void load(); }).subscribe((status) => { if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setError(`Conexión de notificaciones fallida: ${status}`); }); return () => { active = false; void supabase.removeChannel(ch); }; }, [load]);
-  const unread = items.filter((x) => !x.read_at).length;
-  const pressItem = async (item) => { try { if (!item.read_at) await markNotificationRead(item.id); setItems((prev) => prev.map((n) => n.id === item.id ? { ...n, read_at: new Date().toISOString() } : n)); setOpen(false); if (item.order_id && navigation?.navigate) navigation.navigate('ClientOrders', { orderId: item.order_id }); } catch (e) { setError(e.message || 'No se pudo marcar como leída.'); } };
+  const pressItem = async (item) => { try { if (!item.read_at) { await markNotificationRead(item.id); setUnreadCount((value) => Math.max(0, value - 1)); } setItems((prev) => prev.map((n) => n.id === item.id ? { ...n, read_at: new Date().toISOString() } : n)); setOpen(false); } catch (e) { setError(e.message || 'No se pudo marcar como leída.'); } };
   return <View style={styles.wrap}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`${unread} notificaciones sin leer`} onPress={() => { const target = nav.getParent?.() || nav; target.navigate('Notifications'); }} style={styles.bell}><Text style={styles.icon}>🔔</Text><Text style={styles.count}>{unread > 99 ? '99+' : unread}</Text></Pressable>
+    <Pressable accessibilityRole="button" accessibilityLabel={`${unreadCount} notificaciones sin leer`} onPress={() => { const target = nav.getParent?.() || nav; target.navigate('Notifications'); }} style={styles.bell}><Text style={styles.icon}>🔔</Text><Text style={styles.count}>{unreadCount > 99 ? '99+' : unreadCount}</Text></Pressable>
     {open && <View style={[styles.panel, compact && styles.compact]}><Text style={styles.title}>Notificaciones</Text>{loading ? <ActivityIndicator /> : error ? <Text style={styles.error}>{error}</Text> : items.length ? <ScrollView style={styles.list}>{items.map((x) => <Pressable key={x.id} style={[styles.item, !x.read_at && styles.unread]} onPress={() => void pressItem(x)}><Text style={styles.itemTitle}>{x.title}</Text><Text>{x.body}</Text><Text style={styles.date}>{new Date(x.created_at).toLocaleString()}</Text></Pressable>)}</ScrollView> : <Text>Sin notificaciones.</Text>}</View>}
   </View>;
 }

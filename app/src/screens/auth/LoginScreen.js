@@ -15,6 +15,7 @@ import AnimatedButton from '../../components/AnimatedButton';
 import { useAppTheme } from '../../hooks/useAppTheme';
 import { useTranslation } from '../../hooks/useTranslation';
 import { isAdminRole } from '../../utils/roles';
+import MarketplaceWordmark from '../../components/MarketplaceWordmark';
 
 const LoginScreen = ({ navigation, route }) => {
   const [email, setEmail] = useState('');
@@ -70,7 +71,7 @@ const LoginScreen = ({ navigation, route }) => {
       </View>
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.text }]}>IstmiYa</Text>
+          <MarketplaceWordmark width={260} />
           <Text style={[styles.subtitle, { color: colors.muted }]}>{t('login.subtitle')}</Text>
         </View>
 

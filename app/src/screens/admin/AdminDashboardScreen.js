@@ -72,6 +72,17 @@ export default function AdminDashboardScreen({ navigation }) {
       }
       const metrics = summary.data || {};
       const ticketRows = tickets.data || [];
+      const ticketEventsResult = ticketRows.length
+        ? await supabase.from('support_ticket_events').select('id,ticket_id,event_type,detail,created_at').in('ticket_id', ticketRows.map((ticket) => ticket.id)).order('created_at', { ascending: false })
+        : { data: [], error: null };
+      if (ticketEventsResult.error) throw ticketEventsResult.error;
+      const eventsByTicket = new Map();
+      for (const event of ticketEventsResult.data || []) {
+        const events = eventsByTicket.get(event.ticket_id) || [];
+        events.push(event);
+        eventsByTicket.set(event.ticket_id, events);
+      }
+      const ticketsWithHistory = ticketRows.map((ticket) => ({ ...ticket, events: eventsByTicket.get(ticket.id) || [] }));
       const pendingBusinessRows = pendingBusinesses.data || [];
       const businessProfileIds = [...new Set(
         pendingBusinessRows.map((item) => item.businesses?.profile_id).filter(Boolean),
@@ -127,7 +138,7 @@ export default function AdminDashboardScreen({ navigation }) {
         businesses: metrics.businesses || [],
         drivers: metrics.drivers || [],
         topClients: metrics.top_clients || [],
-        tickets: ticketRows,
+        tickets: ticketsWithHistory,
         feedback: metrics.feedback || 0,
         pendingBusinesses: businessRows,
         pendingDrivers: driverRows,
@@ -174,12 +185,24 @@ export default function AdminDashboardScreen({ navigation }) {
     };
   }, [load, role]);
 
-  const updateTicket = async (ticket, status) => {
-    const update = { status };
-    if (replies[ticket.id]?.trim()) update.admin_reply = replies[ticket.id].trim();
-    const { error } = await supabase.from('support_tickets').update(update).eq('id', ticket.id);
-    if (error) Alert.alert('No se pudo actualizar', error.message);
-    else load();
+  const updateTicket = async (ticket, status, changes = {}) => {
+    const reply = replies[ticket.id]?.trim() || ticket.admin_reply || null;
+    const { error } = await supabase.rpc('admin_update_support_ticket', {
+      p_ticket_id: ticket.id,
+      p_status: status,
+      p_reply: reply,
+      p_assigned_to: changes.assignedTo ?? ticket.assigned_to ?? null,
+      p_priority: changes.priority ?? ticket.priority ?? 'normal',
+      p_due_at: changes.dueAt ?? ticket.due_at ?? null,
+    });
+    if (error) Alert.alert('No se pudo actualizar el caso', error.message);
+    else await load();
+  };
+
+  const setTicketPriority = (ticket) => {
+    const order = ['low', 'normal', 'high', 'urgent'];
+    const next = order[(order.indexOf(ticket.priority || 'normal') + 1) % order.length];
+    void updateTicket(ticket, ticket.status, { priority: next });
   };
 
   const reviewVerification = async (entityType, entityId, approved) => {
@@ -246,6 +269,7 @@ export default function AdminDashboardScreen({ navigation }) {
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminActivity')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría en vivo</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminChatAudit')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría de chats</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminUsers')}><Text style={[styles.link, { color: colors.primary }]}>Usuarios y perfiles</Text></Pressable>
+      <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminControlReports')}><Text style={[styles.link, { color: colors.primary }]}>Control IstmiYa · informes</Text></Pressable>
     </View>
     <HelpButton navigation={navigation} context="administración" compact />
     <Text style={[styles.subtitle, { color: colors.muted }]}>Indicadores acumulados de la plataforma</Text>
@@ -368,7 +392,7 @@ export default function AdminDashboardScreen({ navigation }) {
     ))}
     <Text style={[styles.section, { color: colors.text }]}>Ayuda y sugerencias</Text>
     {!data.tickets.length && <Text style={styles.muted}>No hay solicitudes recibidas.</Text>}
-    {data.tickets.map((t) => <View key={t.id} style={[styles.ticket, { backgroundColor: colors.surface }]}><Text style={[styles.rowTitle, { color: colors.text }]}>{t.subject} · {t.category}</Text><Text style={[styles.muted, { color: colors.muted }]}>De {t.profiles?.full_name || 'usuario'} · {t.context || 'General'} · {t.status}{t.order_id ? ` · Pedido ${t.order_id.slice(0, 8)}` : ''}</Text><Text style={[styles.message, { color: colors.text }]}>{t.message}</Text><TextInput accessibilityLabel="Respuesta al usuario" placeholder={t.admin_reply || 'Escribe una respuesta para el usuario'} placeholderTextColor={colors.muted} value={replies[t.id] ?? t.admin_reply ?? ''} onChangeText={(value) => setReplies((current) => ({ ...current, [t.id]: value }))} style={[styles.replyInput, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} multiline /><View style={styles.actions}><Pressable onPress={() => updateTicket(t, 'en_revision')}><Text style={[styles.link, { color: colors.primary }]}>Guardar / tomar caso</Text></Pressable><Pressable onPress={() => updateTicket(t, 'resuelto')}><Text style={[styles.link, { color: colors.primary }]}>Responder y resolver</Text></Pressable></View></View>)}
+    {data.tickets.map((t) => <View key={t.id} style={[styles.ticket, { backgroundColor: colors.surface }]}><Text style={[styles.rowTitle, { color: colors.text }]}>{t.subject} · {t.category}</Text><Text style={[styles.muted, { color: colors.muted }]}>De {t.profiles?.full_name || 'usuario'} · {t.context || 'General'} · {t.status}{t.order_id ? ` · Pedido ${t.order_id.slice(0, 8)}` : ''}</Text><Text style={[styles.muted, { color: colors.muted }]}>Prioridad: {t.priority || 'normal'} · {t.assigned_to === profile?.id ? 'Asignado a ti' : t.assigned_to ? 'Asignado a otro administrador' : 'Sin responsable'}{t.due_at ? ` · Vence ${new Date(t.due_at).toLocaleString('es-CO')}` : ''}</Text><Text style={[styles.message, { color: colors.text }]}>{t.message}</Text><TextInput accessibilityLabel="Respuesta al usuario" placeholder={t.admin_reply || 'Escribe una respuesta para el usuario'} placeholderTextColor={colors.muted} value={replies[t.id] ?? t.admin_reply ?? ''} onChangeText={(value) => setReplies((current) => ({ ...current, [t.id]: value }))} style={[styles.replyInput, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} multiline /><View style={styles.actions}><Pressable onPress={() => updateTicket(t, t.status, { assignedTo: profile?.id })}><Text style={[styles.link, { color: colors.primary }]}>Asignarme</Text></Pressable><Pressable onPress={() => setTicketPriority(t)}><Text style={[styles.link, { color: colors.primary }]}>Cambiar prioridad</Text></Pressable><Pressable onPress={() => updateTicket(t, 'en_revision', { assignedTo: profile?.id, dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })}><Text style={[styles.link, { color: colors.primary }]}>Tomar caso · vence en 24 h</Text></Pressable><Pressable onPress={() => updateTicket(t, 'resuelto')}><Text style={[styles.link, { color: colors.primary }]}>Responder y resolver</Text></Pressable></View>{t.events?.slice(0, 3).map((event) => <Text key={event.id} style={[styles.muted, { color: colors.muted }]}>{event.event_type.replaceAll('_', ' ')} · {new Date(event.created_at).toLocaleString('es-CO')}</Text>)}</View>)}
     <Pressable style={styles.logout} onPress={async () => {
       const result = await signOut();
       if (result.success) navigation.reset({ index: 0, routes: [{ name: 'ClientHome' }] });

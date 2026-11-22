@@ -21,7 +21,8 @@
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/istmiya-adaptive-foreground.png",
+          "image": "./assets/images/istmiya-local-market-splash.png",
+          "imageWidth": 300,
           "resizeMode": "contain",
           "backgroundColor": "#FFF4E2"
         }
@@ -56,7 +57,12 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "favicon": "./assets/images/istmiya-marketplace-icon.png"
+      "favicon": "./assets/images/istmiya-marketplace-icon.png",
+      "splash": {
+        "image": "./assets/images/istmiya-local-market-splash.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#FFF4E2"
+      }
     },
     "platforms": [
       "ios",

@@ -439,3 +439,6 @@ verify_jwt = false
 
 [functions.send-admin-notification-email]
 verify_jwt = false
+
+[functions.control-istmiya-reports]
+verify_jwt = false

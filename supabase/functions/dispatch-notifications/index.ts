@@ -3,10 +3,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const headers = { "content-type": "application/json", "cache-control": "no-store" };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
 const SOUND: Record<string, string> = {
-  business_new_order: "order-new.wav", order_available: "order-available.wav",
-  profile_review_pending: "review-pending.wav", customer_registered: "customer-registered.wav",
-  money_received: "money-received.wav", feedback_elogio: "feedback.wav", feedback_sugerencia: "feedback.wav",
-  financial_exception: "review-pending.wav", inappropriate_language: "review-pending.wav",
+  business_new_order: "order_new.wav", order_available: "order_available.wav",
+  profile_review_pending: "review_pending.wav", customer_registered: "customer_registered.wav",
+  money_received: "money_received.wav", feedback_elogio: "feedback.wav", feedback_sugerencia: "feedback.wav",
+  order_preparing: "order_new.wav", order_ready: "order_new.wav", order_picked_up: "order_new.wav",
+  order_on_the_way: "order_new.wav", driver_assigned: "order_new.wav", order_arrival_soon: "order_new.wav",
+  order_delayed: "review_pending.wav", financial_exception: "review_pending.wav", inappropriate_language: "review_pending.wav",
 };
 
 Deno.serve(async (req) => {
@@ -72,10 +74,14 @@ Deno.serve(async (req) => {
 });
 
 function channel(event: string) {
-  if (event === "business_new_order") return "orders";
-  if (event === "order_available") return "available";
-  if (event === "profile_review_pending" || event === "customer_registered" || event === "financial_exception" || event === "inappropriate_language") return "admin";
-  if (event === "money_received") return "money";
+  if (event === "business_new_order") return "orders_v2";
+  if (event === "order_available") return "available_v2";
+  if (event === "profile_review_pending" || event === "financial_exception" || event === "inappropriate_language") return "admin_review_v2";
+  if (event === "customer_registered") return "admin_info_v2";
+  if (event === "money_received") return "money_v2";
+  if (event === "feedback_elogio" || event === "feedback_sugerencia") return "feedback_v2";
+  if (event === "order_delayed") return "operations_v2";
+  if (["order_preparing", "order_ready", "order_picked_up", "order_on_the_way", "driver_assigned", "order_arrival_soon"].includes(event)) return "order_updates_v2";
   return "default";
 }
 
