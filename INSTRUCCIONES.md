@@ -201,11 +201,13 @@ Las quejas relacionadas con un pedido se notifican al correo que registró el ne
 
 ```powershell
 Set-Location 'D:\App-Istmina'
-supabase secrets set RESEND_API_KEY=re_REEMPLAZAR RESEND_FROM_EMAIL="IstmiYa <notificaciones@TU_DOMINIO_VERIFICADO>" SUPPORT_EMAIL=ecoalertapruebas@gmail.com
+supabase secrets set RESEND_API_KEY=re_REEMPLAZAR RESEND_FROM_EMAIL="IstmiYa <notificaciones@TU_DOMINIO_VERIFICADO>" SUPPORT_EMAIL=istmiyasoporte@gmail.com
 supabase functions deploy notify-business-complaint
 ```
 
 La queja se guarda en Supabase aunque falle el envío; en ese caso, la app informa que el correo no pudo enviarse. No agregues `RESEND_API_KEY` a `app/.env`.
+
+Las quejas se copian al buzón SUPPORT_EMAIL por el relay SMTP Gmail configurado arriba. En Supabase define SMTP_RELAY_URL y SMTP_RELAY_SECRET; en el entorno del relay define SMTP_USER=istmiyanotificaciones@gmail.com, SMTP_PASS (contraseña de aplicación), SUPPORT_EMAIL y el mismo SMTP_RELAY_SECRET. El relay autoriza el buzón de soporte. Para quejas asociadas a pedidos, se conserva además el aviso al correo complaint_email del negocio mediante Resend; configura RESEND_API_KEY y RESEND_FROM_EMAIL como secretos de Supabase. Nunca guardes contraseñas o claves en la app ni en Git.
 
 ## 7. Llamadas de voz LiveKit
 

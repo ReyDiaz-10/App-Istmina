@@ -85,10 +85,24 @@ async function processJob(db: ReturnType<typeof createClient>, jobId: string) {
 
     let aiSummary: string | null = null;
     let aiError: string | null = null;
-    if (Deno.env.get("OPENAI_API_KEY") && Deno.env.get("OPENAI_MODEL")) {
-      try { aiSummary = await summarizeWithAI(metrics, previousMetrics); }
-      catch { aiError = "ai_summary_unavailable"; }
+    const geminiApiKey = Deno.env.get("GEMINI_API_KEY")?.trim();
+    const configuredModel = Deno.env.get("GEMINI_MODEL")?.trim();
+    const geminiModel = configuredModel?.replace(/^models\//i, "");
+    if (!geminiApiKey || !geminiModel) {
+      aiError = !geminiApiKey && !geminiModel
+        ? "gemini_secrets_missing"
+        : !geminiApiKey ? "gemini_api_key_missing" : "gemini_model_missing";
+    } else if (!/^[A-Za-z0-9._-]+$/.test(geminiModel)) {
+      aiError = "gemini_model_invalid";
+    } else {
+      try { aiSummary = await summarizeWithAI(metrics, previousMetrics, geminiApiKey, geminiModel); }
+      catch (error) {
+        aiError = error instanceof Error && /^gemini_http_\d+$/.test(error.message)
+          ? error.message
+          : "gemini_request_failed";
+      }
     }
+    if (aiError) console.warn("control_report_ai_unavailable", job.id, aiError);
     const pdf = await createReportPdf(job, metrics, previousMetrics, aiSummary, aiError);
     const pdfPath = `${job.period_start}/${job.id}.pdf`;
     const { error: uploadError } = await db.storage.from("admin-control-reports").upload(pdfPath, pdf, {
@@ -117,7 +131,7 @@ async function processJob(db: ReturnType<typeof createClient>, jobId: string) {
     const { error: saveError } = await db.from("admin_control_report_jobs").update(update).eq("id", job.id);
     if (saveError) throw new Error("report_result_save_failed");
     const signed = await db.storage.from("admin-control-reports").createSignedUrl(pdfPath, 60 * 60);
-    return json({ status: "ready", job_id: job.id, url: signed.data?.signedUrl || null, email_error: emailError });
+    return json({ status: "ready", job_id: job.id, url: signed.data?.signedUrl || null, email_error: emailError, ai_error: aiError });
   } catch (error) {
     const code = error instanceof Error ? error.message : "report_processing_failed";
     const { error: saveError } = await db.from("admin_control_report_jobs").update({
@@ -129,29 +143,31 @@ async function processJob(db: ReturnType<typeof createClient>, jobId: string) {
   }
 }
 
-async function summarizeWithAI(current: unknown, previous: unknown): Promise<string> {
-  const key = Deno.env.get("OPENAI_API_KEY")!;
-  const model = Deno.env.get("OPENAI_MODEL")!;
-  const response = await fetch("https://api.openai.com/v1/responses", {
+async function summarizeWithAI(current: unknown, previous: unknown, key: string, model: string): Promise<string> {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
+    headers: { "x-goog-api-key": key, "content-type": "application/json" },
     body: JSON.stringify({
-      model, store: false, max_output_tokens: 700,
-      instructions: "Eres el analista interno de IstmiYa. Redacta en español un resumen ejecutivo para el administrador, destaca cambios relevantes y anomalías a revisar. Los valores ya fueron calculados por PostgreSQL: no recalcules ni inventes cifras. Aclara cuando un dato no está registrado y no llames utilidad a la liquidación neta.",
-      input: JSON.stringify({ periodo_actual: aggregateForAI(current), periodo_anterior: aggregateForAI(previous) }),
+      systemInstruction: {
+        parts: [{ text: "Eres el analista interno de IstmiYa. Redacta en español un resumen ejecutivo para el administrador, destaca cambios relevantes y anomalías a revisar. Los valores ya fueron calculados por PostgreSQL: no recalcules ni inventes cifras. Aclara cuando un dato no está registrado y no llames utilidad a la liquidación neta." }],
+      },
+      contents: [{
+        role: "user",
+        parts: [{ text: JSON.stringify({ periodo_actual: aggregateForAI(current), periodo_anterior: aggregateForAI(previous) }) }],
+      }],
+      generationConfig: { maxOutputTokens: 700 },
     }),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(`openai_http_${response.status}`);
-  const output = (data.output || []).flatMap((item: { content?: Array<{ type?: string; text?: string }> }) => item.content || [])
-    .find((item: { type?: string }) => item.type === "output_text")?.text;
-  if (typeof output !== "string" || !output.trim()) throw new Error("openai_empty_summary");
+  if (!response.ok) throw new Error(`gemini_http_${response.status}`);
+  const output = (data.candidates || [])
+    .flatMap((candidate: { content?: { parts?: Array<{ text?: string }> } }) => candidate.content?.parts || [])
+    .map((part: { text?: string }) => part.text || "")
+    .join("");
+  if (!output.trim()) throw new Error("gemini_no_text_returned");
   return output.slice(0, 5000);
 }
-
 function aggregateForAI(value: any) {
-  const businesses = Array.isArray(value?.businesses) ? value.businesses : [];
-  const drivers = Array.isArray(value?.drivers) ? value.drivers : [];
   return {
     period: value?.period,
     orders: value?.orders,
@@ -159,19 +175,18 @@ function aggregateForAI(value: any) {
     refunds: value?.refunds,
     discounts: value?.discounts,
     business_commissions: value?.business_commissions,
-    businesses: {
-      count: businesses.length,
-      orders: businesses.reduce((sum: number, row: any) => sum + Number(row.orders || 0), 0),
-      gross_cop: businesses.reduce((sum: number, row: any) => sum + Number(row.gross_cop || 0), 0),
-      settlement_net_cop: businesses.reduce((sum: number, row: any) => sum + Number(row.settlement_net_cop || 0), 0),
-      settlement_pending_cop: businesses.reduce((sum: number, row: any) => sum + Number(row.settlement_pending_cop || 0), 0),
-    },
-    drivers: {
-      count: drivers.length,
-      deliveries: drivers.reduce((sum: number, row: any) => sum + Number(row.deliveries || 0), 0),
-      earned_cop: drivers.reduce((sum: number, row: any) => sum + Number(row.earned_cop || 0), 0),
-      withdrawn_cop: drivers.reduce((sum: number, row: any) => sum + Number(row.withdrawn_cop || 0), 0),
-    },
+    businesses: (Array.isArray(value?.businesses) ? value.businesses : []).map((row: any) => ({
+      name: row.name,
+      orders: row.orders,
+      gross_cop: row.gross_cop,
+      settlement_net_cop: row.settlement_net_cop,
+      settlement_pending_cop: row.settlement_pending_cop,
+    })),
+    drivers: (Array.isArray(value?.drivers) ? value.drivers : []).map((row: any) => ({
+      deliveries: row.deliveries,
+      earned_cop: row.earned_cop,
+      withdrawn_cop: row.withdrawn_cop,
+    })),
     withdrawals: value?.withdrawals,
     business_payouts: value?.business_payouts,
     peak_hours: value?.peak_hours,

@@ -82,14 +82,12 @@ const SupportTickets = ({ route, navigation }) => {
       if (error) throw error;
       let confirmationTitle = 'Enviado';
       let confirmationMessage = 'Tu mensaje ha sido recibido. Te responderemos pronto.';
-      if (form.type === 'queja') {
-        const { error: notificationError } = await supabase.functions.invoke('notify-business-complaint', {
-          body: { ticketId: ticket.id },
-        });
-        if (notificationError) {
-          confirmationTitle = 'Queja recibida';
-          confirmationMessage = `El caso quedó registrado, pero no se pudo enviar el correo de notificación: ${notificationError.message}`;
-        }
+      const { error: notificationError } = await supabase.functions.invoke('notify-business-complaint', {
+        body: { ticketId: ticket.id },
+      });
+      if (notificationError) {
+        confirmationTitle = form.type === 'queja' ? 'Queja recibida' : 'Solicitud recibida';
+        confirmationMessage = `El caso quedó registrado, pero no se pudo enviar el correo de notificación: ${notificationError.message}`;
       }
       Alert.alert(confirmationTitle, confirmationMessage);
       setForm({ subject: '', message: '', type: context ? 'soporte' : 'sugerencia' });

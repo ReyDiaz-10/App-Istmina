@@ -18,10 +18,15 @@ export function filterBusinesses(businesses, category, searchText) {
 
   return businesses.filter((business) => {
     const products = business.products || [];
-    const matchesCategory = category === 'Todos' || products.some((product) => {
+    const businessCategory = normalize(business.category);
+    const businessType = normalize(business.business_type);
+    const matchesBusinessCategory = [businessCategory, businessType]
+      .some((value) => categoryTerms.some((term) => value.includes(normalize(term))));
+    const matchesProductCategory = products.some((product) => {
       const productCategory = normalize(product.category);
       return categoryTerms.some((term) => productCategory.includes(normalize(term)));
     });
+    const matchesCategory = category === 'Todos' || matchesBusinessCategory || matchesProductCategory;
     if (!matchesCategory) return false;
     if (!query) return true;
 

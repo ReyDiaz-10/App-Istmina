@@ -28,6 +28,15 @@ jobs:
         run: npm ci
         working-directory: app
 
+      - name: Verify EAS authentication secret
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "GitHub Actions secret EXPO_TOKEN is missing. Add it in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
       - name: Build APK with EAS
         run: npx --yes eas-cli@27.10.0 build --platform android --profile preview --non-interactive
         working-directory: app

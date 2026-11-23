@@ -56,7 +56,7 @@ export default function AdminDashboardScreen({ navigation }) {
     try {
       const [summary, tickets, pendingBusinesses, pendingDrivers, operational] = await Promise.all([
         supabase.rpc('admin_dashboard_summary'),
-        supabase.from('support_tickets').select('*, profiles(full_name, role)').order('created_at', { ascending: false }).limit(100),
+        supabase.from('support_tickets').select('*, profiles!support_tickets_requester_id_fkey(full_name, role)').order('created_at', { ascending: false }).limit(100),
         supabase.from('business_verifications')
           .select('*, businesses!inner(id, store_name, store_image_url, profile_id, address, slogan)')
           .eq('verification_status', 'pendiente')

@@ -27,6 +27,8 @@ serve(async (request) => {
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
     const fromEmail = Deno.env.get("RESEND_FROM_EMAIL");
+    const smtpRelayUrl = Deno.env.get("SMTP_RELAY_URL");
+    const smtpRelaySecret = Deno.env.get("SMTP_RELAY_SECRET");
     const authorization = request.headers.get("Authorization");
     if (!supabaseUrl || !anonKey || !serviceRoleKey || !authorization) {
       return jsonResponse({ error: "Complaint notification service is not configured" }, 503);
@@ -56,16 +58,11 @@ serve(async (request) => {
     if (!ticket || ticket.requester_id !== user.id) {
       return jsonResponse({ error: "Ticket not found for this account" }, 404);
     }
-    if (ticket.category !== "queja") {
-      return jsonResponse({ error: "Only complaints can be forwarded to a business" }, 400);
-    }
-    if (!resendApiKey || !fromEmail) {
-      return jsonResponse({ error: "Resend secrets are not configured" }, 503);
-    }
-
-    let recipient = Deno.env.get("SUPPORT_EMAIL");
+    const supportEmail = Deno.env.get("SUPPORT_EMAIL");
+    if (!supportEmail) return jsonResponse({ error: "No support inbox is configured" }, 503);
+    let recipient = supportEmail;
     let businessName = "IstmiYa";
-    if (ticket.order_id) {
+    if (ticket.category === "queja" && ticket.order_id) {
       const { data: order, error: orderError } = await admin
         .from("orders")
         .select("business_id")
@@ -88,11 +85,14 @@ serve(async (request) => {
     if (!recipient) {
       return jsonResponse({ error: "No complaint inbox is configured" }, 503);
     }
+    if (!smtpRelayUrl || !smtpRelaySecret) {
+      return jsonResponse({ error: "Support SMTP relay is not configured" }, 503);
+    }
 
     const body = [
       `Hola ${businessName},`,
       "",
-      "Recibiste una queja enviada desde IstmiYa.",
+      `Recibiste una solicitud de ${ticket.category} enviada desde IstmiYa.`,
       `Asunto: ${ticket.subject}`,
       `Pedido: ${ticket.order_id || "No asociado a un pedido"}`,
       `Contexto: ${ticket.context || "General"}`,
@@ -101,22 +101,36 @@ serve(async (request) => {
       "",
       `Referencia del caso: ${ticket.id}`,
     ].join("\n");
-    const emailResponse = await fetch("https://api.resend.com/emails", {
+    const deliveries: Promise<Response>[] = [fetch(smtpRelayUrl, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendApiKey}`,
-        "Content-Type": "application/json",
-      },
+      headers: { authorization: `Bearer ${smtpRelaySecret}`, "content-type": "application/json" },
       body: JSON.stringify({
-        from: fromEmail,
-        to: [recipient],
+        to: supportEmail,
         subject: `Queja recibida en IstmiYa: ${ticket.subject}`,
         text: body,
       }),
-    });
-    if (!emailResponse.ok) {
-      console.error("Resend rejected a complaint notification", emailResponse.status);
-      return jsonResponse({ error: "The complaint was saved, but its email notification failed" }, 502);
+    })];
+    let businessNotificationMissingConfig = false;
+    if (recipient !== supportEmail) {
+      if (!resendApiKey || !fromEmail) {
+        businessNotificationMissingConfig = true;
+      } else {
+        deliveries.push(fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${resendApiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            from: fromEmail,
+            to: [recipient],
+            subject: `Queja recibida en IstmiYa: ${ticket.subject}`,
+            text: body,
+          }),
+        }));
+      }
+    }
+    const responses = await Promise.all(deliveries);
+    if (businessNotificationMissingConfig || responses.some((response) => !response.ok)) {
+      console.error("Complaint email delivery failed", responses.map((response) => response.status));
+      return jsonResponse({ error: "The complaint was saved, but one or more email notifications failed" }, 502);
     }
 
     return jsonResponse({ sent: true });
