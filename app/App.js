@@ -5,7 +5,7 @@ import './src/services/liveKitSetup';
 import * as SplashScreen from 'expo-splash-screen';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { ActivityIndicator, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import LoginScreen from './src/screens/auth/LoginScreen';
@@ -194,11 +194,99 @@ export default function App() {
 
 function NotificationCenterScreen({ navigation }) {
   const role = useAuthStore((state) => state.profile?.role);
-  const [rows, setRows] = React.useState([]); const [error, setError] = React.useState(''); const [loading, setLoading] = React.useState(true);
-  const load = React.useCallback(async () => { setLoading(true); try { const { data, error: queryError } = await supabase.from('user_notifications').select('id,event_key,title,body,order_id,created_at,read_at').order('created_at', { ascending: false }).limit(100); if (queryError) throw queryError; setRows(data || []); setError(''); } catch (e) { setError(e.message || 'No se pudieron cargar las notificaciones.'); } finally { setLoading(false); } }, []);
-  useEffect(() => { let active = true; Promise.resolve().then(() => { if (active) void load(); }); const channel = supabase.channel('notification-center').on('postgres_changes', { event: '*', schema: 'public', table: 'user_notifications' }, () => void load()).subscribe((status) => { if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setError(`Conexión de notificaciones fallida: ${status}`); }); return () => { active = false; void supabase.removeChannel(channel); }; }, [load]);
-  const markRead = async (id) => { const { error: updateError } = await supabase.rpc('mark_notification_read', { p_id: id }); if (updateError) setError(updateError.message); else setRows((old) => old.map((row) => row.id === id ? { ...row, read_at: new Date().toISOString() } : row)); };
-  return <SafeAreaView style={{ flex: 1, padding: 16 }}><Text style={{ fontSize: 22, fontWeight: '800' }}>Notificaciones</Text>{loading ? <ActivityIndicator /> : error ? <Text accessibilityRole="alert">{error}</Text> : <ScrollView>{rows.map((row) => <Pressable key={row.id} onPress={async () => { await markRead(row.id); if (!row.order_id) return; if (role === 'negocio') navigation.navigate('BusinessHome', { screen: 'Orders' }); else if (role === 'repartidor') navigation.navigate('DriverHome'); else navigation.navigate('ClientOrders', { orderId: row.order_id }); }} style={{ padding: 12, borderBottomWidth: 1, borderColor: '#ddd', backgroundColor: row.read_at ? 'transparent' : '#F1F4FF' }}><Text style={{ fontWeight: '700' }}>{row.title}</Text><Text>{row.body}</Text><Text style={{ color: '#666', fontSize: 12 }}>{new Date(row.created_at).toLocaleString()}</Text></Pressable>)}</ScrollView>}</SafeAreaView>;
+  const { colors } = useAppTheme();
+  const [rows, setRows] = React.useState([]);
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(true);
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error: queryError } = await supabase.from('user_notifications')
+        .select('id,event_key,title,body,order_id,created_at,read_at')
+        .order('created_at', { ascending: false }).limit(100);
+      if (queryError) throw queryError;
+      setRows(data || []);
+      setError('');
+    } catch (loadError) {
+      setError(loadError.message || 'No se pudieron cargar las notificaciones.');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    Promise.resolve().then(() => { if (active) void load(); });
+    const channel = supabase.channel('notification-center')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'user_notifications' }, () => void load())
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') setError(`Conexión de notificaciones fallida: ${status}`);
+      });
+    return () => { active = false; void supabase.removeChannel(channel); };
+  }, [load]);
+
+  const markRead = async (id) => {
+    try {
+      const { error: updateError } = await supabase.rpc('mark_notification_read', { p_id: id });
+      if (updateError) throw updateError;
+      setRows((old) => old.map((row) => row.id === id ? { ...row, read_at: new Date().toISOString() } : row));
+      setError('');
+      return true;
+    } catch (updateError) {
+      setError(updateError.message || 'No se pudo marcar como leída.');
+      return false;
+    }
+  };
+
+  const goBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate(getInitialRoute(useAuthStore.getState().user, useAuthStore.getState().profile));
+  };
+
+  const openNotification = async (row) => {
+    if (!row.read_at && !(await markRead(row.id))) return;
+    if (!row.order_id) return;
+    if (role === 'negocio') navigation.navigate('BusinessHome', { screen: 'Orders' });
+    else if (role === 'repartidor') navigation.navigate('DriverHome');
+    else navigation.navigate('ClientOrders', { orderId: row.order_id });
+  };
+
+  return (
+    <SafeAreaView style={{ flex: 1, padding: 16, backgroundColor: colors.background }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Volver a la pantalla anterior"
+          onPress={goBack}
+          style={{ minHeight: 44, justifyContent: 'center', paddingRight: 14 }}
+        >
+          <Text style={{ color: colors.primary, fontSize: 16, fontWeight: '800' }}>‹ Volver</Text>
+        </Pressable>
+        <Text style={{ color: colors.text, fontSize: 22, fontWeight: '800' }}>Notificaciones</Text>
+      </View>
+      {loading ? <ActivityIndicator color={colors.primary} /> : error ? (
+        <Text accessibilityRole="alert" style={{ color: colors.text }}>{error}</Text>
+      ) : (
+        <ScrollView>
+          {rows.map((row) => (
+            <Pressable
+              key={row.id}
+              onPress={() => void openNotification(row)}
+              style={{ padding: 12, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: row.read_at ? 'transparent' : colors.elevated }}
+            >
+              <Text style={{ color: colors.text, fontWeight: '700' }}>{row.title}</Text>
+              <Text style={{ color: colors.text }}>{row.body}</Text>
+              <Text style={{ color: colors.muted, fontSize: 12 }}>{new Date(row.created_at).toLocaleString()}</Text>
+            </Pressable>
+          ))}
+          {!rows.length ? <Text style={{ color: colors.muted }}>No tienes notificaciones.</Text> : null}
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
 }
 
 
