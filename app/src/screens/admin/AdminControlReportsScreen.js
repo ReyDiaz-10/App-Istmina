@@ -5,7 +5,7 @@ import { useAppTheme } from '../../hooks/useAppTheme';
 import { useAuthStore } from '../../store/authStore';
 import AnimatedButton from '../../components/AnimatedButton';
 import { getEmailPreferences } from '../../services/notifications';
-import { createControlReportDownloadUrl, listControlReports, requestControlReport } from '../../services/controlReports';
+import { createControlReportDownloadUrl, listControlReports, processControlReport, requestControlReport } from '../../services/controlReports';
 
 const bogotaDate = () => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -26,6 +26,7 @@ export default function AdminControlReportsScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [openingId, setOpeningId] = useState(null);
+  const [retryingId, setRetryingId] = useState(null);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
@@ -75,6 +76,19 @@ export default function AdminControlReportsScreen({ navigation }) {
     finally { setOpeningId(null); }
   };
 
+  const retryReport = async (jobId) => {
+    setRetryingId(jobId);
+    try {
+      const result = await processControlReport(jobId);
+      await load();
+      if (result?.status === 'error') Alert.alert('Informe con error', result.error || 'Revisa los detalles del informe.');
+      else if (result?.status === 'processing') Alert.alert('Informe en proceso', 'Si lleva menos de 15 minutos, la cola aún lo considera activo. Si continúa atascado, espera y vuelve a intentar este mismo informe.');
+    } catch (retryError) {
+      await load();
+      Alert.alert('No se pudo reintentar el informe', retryError.message || 'Revisa los logs de control-istmiya-reports.');
+    } finally { setRetryingId(null); }
+  };
+
   const fieldStyle = [styles.input, { color: colors.text, backgroundColor: colors.input, borderColor: colors.border }];
   return (
     <ScrollView style={[styles.scroll, { backgroundColor: colors.background }]} contentContainerStyle={styles.container}>
@@ -111,6 +125,11 @@ export default function AdminControlReportsScreen({ navigation }) {
           {report.ai_summary ? <Text style={[styles.note, { color: colors.text }]}>{report.ai_summary}</Text> : null}
           {report.error_code ? <Text style={[styles.smallNote, { color: '#B3261E' }]}>Detalle: {report.error_code}</Text> : null}
           {report.email_error ? <Text style={[styles.smallNote, { color: '#B65C00' }]}>PDF listo, correo no enviado: {report.email_error}</Text> : null}
+          {report.status === 'processing' ? (
+            <Pressable disabled={retryingId === report.id} onPress={() => void retryReport(report.id)}>
+              <Text style={[styles.action, { color: colors.primary }]}>{retryingId === report.id ? 'Reintentando…' : 'Reintentar informe'}</Text>
+            </Pressable>
+          ) : null}
           {report.status === 'ready' ? <Pressable disabled={openingId === report.id} onPress={() => void openPdf(report.id)}><Text style={[styles.action, { color: colors.primary }]}>{openingId === report.id ? 'Abriendo PDF…' : 'Descargar PDF'}</Text></Pressable> : null}
         </View>
       ))}

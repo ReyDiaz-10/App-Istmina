@@ -14,11 +14,16 @@ export async function requestControlReport({ start, end, emailRequested, email }
   });
   if (error) throw error;
   if (!jobId) throw new Error('No se pudo poner el informe en cola.');
-  const { data, error: functionError } = await supabase.functions.invoke('control-istmiya-reports', {
+  const result = await processControlReport(jobId);
+  return { jobId, result };
+}
+
+export async function processControlReport(jobId) {
+  const { data, error } = await supabase.functions.invoke('control-istmiya-reports', {
     body: { action: 'process', job_id: jobId },
   });
-  if (functionError) throw functionError;
-  return { jobId, result: data };
+  if (error) throw error;
+  return data;
 }
 
 export async function createControlReportDownloadUrl(jobId) {
