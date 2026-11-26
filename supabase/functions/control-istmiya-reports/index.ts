@@ -77,15 +77,15 @@ Deno.serve(async (request) => {
     const recipient = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
     if (!jobId || !isValidEmail(recipient)) return json({ error: "invalid_report_email" }, 400);
     const { data: report, error } = await db.from("admin_control_report_jobs")
-      .select("id,requested_by,report_kind,period_start,period_end,status,pdf_path,metrics,email_sent_at")
+      .select("id,requested_by,report_kind,period_start,period_end,status,pdf_path,metrics,email_sent_at,email_to")
       .eq("id", jobId).maybeSingle();
     if (error || !report) return json({ error: "report_not_found" }, 404);
     if (report.report_kind !== "daily" && report.requested_by !== adminId) return json({ error: "report_not_owned" }, 403);
     if (report.status !== "ready" || !report.pdf_path) return json({ error: "report_not_available" }, 409);
-    if (report.email_sent_at) return json({ status: "sent", already_sent: true });
+    if (report.email_sent_at && report.email_to?.trim().toLowerCase() === recipient) return json({ status: "sent", already_sent: true });
     try {
       const orders = (report.metrics as any)?.current?.orders || {};
-      await sendReportEmail(report as ReportJob & { pdf_path: string }, orders, recipient);
+      await sendReportEmail(report as ReportJob & { pdf_path: string }, orders, recipient, false);
       const { error: saveError } = await db.from("admin_control_report_jobs")
         .update({ email_to: recipient, email_sent_at: new Date().toISOString(), email_error: null }).eq("id", jobId);
       if (saveError) throw new Error("report_email_state_save_failed");
@@ -357,11 +357,11 @@ function aggregateForAI(value: any) {
   };
 }
 
-async function sendReportEmail(job: ReportJob & { pdf_path: string }, orders: any, recipient: string) {
+async function sendReportEmail(job: ReportJob & { pdf_path: string }, orders: any, recipient: string, enforceAllowlist = true) {
   const fallbackTo = Deno.env.get("ADMIN_ALERT_EMAIL")?.trim().toLowerCase();
   const allowlist = new Set([fallbackTo, ...(Deno.env.get("ADMIN_ALERT_EMAIL_ALLOWLIST") || "").split(",").map((value) => value.trim().toLowerCase())].filter(Boolean));
   if (!recipient) throw new Error("report_email_not_configured");
-  if (!allowlist.has(recipient.toLowerCase())) throw new Error("report_email_recipient_not_allowlisted");
+  if (enforceAllowlist && !allowlist.has(recipient.toLowerCase())) throw new Error("report_email_recipient_not_allowlisted");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceKey) throw new Error("server_not_configured");
@@ -379,7 +379,7 @@ async function sendReportEmail(job: ReportJob & { pdf_path: string }, orders: an
     + "<br/><b>Ventas brutas registradas:</b> " + cop(orders.gross_cop)
     + '</p><p><a href="' + signedUrl + '" style="display:inline-block;background:#f58216;color:white;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:bold">Descargar informe PDF</a></p><p>El enlace vence en 24 horas.</p><small>Soporte: '
     + (Deno.env.get("SUPPORT_EMAIL") || "istmiyasoporte@gmail.com") + "</small></div>";
-  await sendTransactionalEmail({ to: recipient, subject, text, html, idempotencyKey: "control-report/" + job.id });
+  await sendTransactionalEmail({ to: recipient, subject, text, html, idempotencyKey: "control-report/" + job.id + "/" + recipient.toLowerCase() });
 }
 
 function isValidEmail(value: string) {
@@ -429,8 +429,13 @@ async function createReportPdf(job: ReportJob, current: any, previous: any, summ
   });
   y = 422;
   section("Resumen ejecutivo");
-  draw(summary || "La síntesis ejecutiva se está preparando. Las cifras y alertas de este informe se calcularon en PostgreSQL.", { size: 10 });
-  if (aiError) draw("Estado de IA: resumen no disponible; el informe determinístico se generó correctamente.", { size: 9, color: rgb(0.67,0.18,0.12) });
+  if (summary) {
+    draw(summary, { size: 10 });
+  } else if (aiError) {
+    draw(`Resumen de Gemini no disponible (${aiError}). Las métricas numéricas se calcularon en PostgreSQL.`, { size: 9, color: rgb(0.67,0.18,0.12) });
+  } else {
+    draw("El resumen de Gemini se está preparando. Las métricas numéricas se calcularon en PostgreSQL.", { size: 10 });
+  }
   section("Comparación con el periodo anterior");
   draw(`Pedidos: ${pOrders} vs. ${Number(previous?.orders?.total || 0)} · Ventas brutas: ${cop(pGross)} vs. ${cop(previous?.orders?.gross_cop || 0)}`);
   section("Pedidos por estado");

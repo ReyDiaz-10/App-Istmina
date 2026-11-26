@@ -21,6 +21,7 @@ export default function AdminControlReportsScreen({ navigation }) {
   const [start, setStart] = useState(bogotaDate());
   const [end, setEnd] = useState(bogotaDate());
   const [email, setEmail] = useState('');
+  const [reportEmails, setReportEmails] = useState({});
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -92,14 +93,15 @@ export default function AdminControlReportsScreen({ navigation }) {
     } finally { setRetryingId(null); }
   };
 
-  const sendReport = async (jobId) => {
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+  const sendReport = async (jobId, recipient) => {
+    const targetEmail = (recipient || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(targetEmail)) {
       Alert.alert('Correo requerido', 'Ingresa un correo válido para recibir el enlace del PDF.');
       return;
     }
     setSendingId(jobId);
     try {
-      await sendControlReportEmail(jobId, email.trim());
+      await sendControlReportEmail(jobId, targetEmail);
       await load();
       Alert.alert('Correo enviado', 'El enlace seguro de descarga se envió correctamente.');
     } catch (sendError) {
@@ -168,14 +170,13 @@ export default function AdminControlReportsScreen({ navigation }) {
           ) : null}
           {report.status === 'ready' ? (
             <View>
-              {report.email_sent_at ? <Text style={[styles.smallNote, { color: '#16804A' }]}>Correo enviado a {report.email_to || 'la dirección configurada'}.</Text> : (
-                <View style={styles.emailActions}>
-                  <TextInput accessibilityLabel="Correo destinatario del informe" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" placeholder="admin@ejemplo.com" placeholderTextColor={colors.muted} style={[fieldStyle, styles.emailInput]} />
-                  <Pressable disabled={sendingId === report.id} onPress={() => void sendReport(report.id)}>
-                    <Text style={[styles.action, { color: colors.primary }]}>{sendingId === report.id ? 'Enviando…' : 'Enviar enlace por correo'}</Text>
-                  </Pressable>
-                </View>
-              )}
+              {report.email_sent_at ? <Text style={[styles.smallNote, { color: '#16804A' }]}>Correo enviado a {report.email_to || 'la dirección configurada'}. Puedes cambiar el destinatario y enviarlo de nuevo.</Text> : null}
+              <View style={styles.emailActions}>
+                <TextInput accessibilityLabel="Correo destinatario del informe" value={reportEmails[report.id] ?? report.email_to ?? email} onChangeText={(value) => setReportEmails((current) => ({ ...current, [report.id]: value }))} keyboardType="email-address" autoCapitalize="none" placeholder="correo@ejemplo.com" placeholderTextColor={colors.muted} style={[fieldStyle, styles.emailInput]} />
+                <Pressable disabled={sendingId === report.id} onPress={() => void sendReport(report.id, reportEmails[report.id] ?? report.email_to ?? email)}>
+                  <Text style={[styles.action, { color: colors.primary }]}>{sendingId === report.id ? 'Enviando…' : report.email_sent_at ? 'Enviar a otro correo' : 'Enviar enlace por correo'}</Text>
+                </Pressable>
+              </View>
               <Pressable disabled={openingId === report.id} onPress={() => void openPdf(report.id)}><Text style={[styles.action, { color: colors.primary }]}>{openingId === report.id ? 'Abriendo PDF…' : 'Descargar PDF'}</Text></Pressable>
             </View>
           ) : null}

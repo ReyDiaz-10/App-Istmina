@@ -29,6 +29,7 @@ import AdminChatAuditScreen from './src/screens/admin/AdminChatAuditScreen';
 import AdminUsersScreen from './src/screens/admin/AdminUsersScreen';
 import AdminUserDetailsScreen from './src/screens/admin/AdminUserDetailsScreen';
 import AdminControlReportsScreen from './src/screens/admin/AdminControlReportsScreen';
+import AdminEmailPreferencesScreen from './src/screens/admin/AdminEmailPreferencesScreen';
 import SupportTickets from './src/screens/client/SupportTickets';
 import AboutScreen from './src/screens/client/AboutScreen';
 import PrivacyScreen from './src/screens/client/PrivacyScreen';
@@ -177,6 +178,7 @@ export default function App() {
           <Stack.Screen name="AdminUsers" component={AdminUsersScreen} />
           <Stack.Screen name="AdminUserDetails" component={AdminUserDetailsScreen} />
           <Stack.Screen name="AdminControlReports" component={AdminControlReportsScreen} />
+          <Stack.Screen name="AdminEmailPreferences" component={AdminEmailPreferencesScreen} />
           <Stack.Screen name="Notifications" component={NotificationCenterScreen} />
           <Stack.Screen name="Support" component={SupportTickets} />
           <Stack.Screen name="About" component={AboutScreen} />

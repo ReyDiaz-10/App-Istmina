@@ -9,8 +9,8 @@ import { formatCOP } from '../../utils/formatters';
 import { getDriverDocumentUrl, getProfilePhotoUrl } from '../../services/onboardingMedia';
 import { isAdminRole } from '../../utils/roles';
 import { usePreferencesStore } from '../../store/preferencesStore';
-import { getEmailPreferences, setEmailPreferences } from '../../services/notifications';
 import NotificationBell from '../../components/NotificationBell';
+import AdminActivityBanner from '../../components/AdminActivityBanner';
 
 const Metric = ({ label, value }) => {
   const { colors } = useAppTheme();
@@ -28,10 +28,6 @@ export default function AdminDashboardScreen({ navigation }) {
   const [reviewNotes, setReviewNotes] = useState({});
   const [reviewingKey, setReviewingKey] = useState(null);
   const [loadError, setLoadError] = useState(null);
-  const [emailPreferences, setEmailPreferencesState] = useState({ profilePending: true, inappropriateLanguage: true, financialException: true, email: '' });
-  const [emailPrefError, setEmailPrefError] = useState('');
-  const [emailPrefSuccess, setEmailPrefSuccess] = useState('');
-  const [savingEmailPref, setSavingEmailPref] = useState(false);
   const [data, setData] = useState({
     users: 0,
     clients: 0,
@@ -160,11 +156,6 @@ export default function AdminDashboardScreen({ navigation }) {
   }, [load]);
 
   useEffect(() => {
-    if (!profile?.id || !isAdminRole(role)) return;
-    getEmailPreferences(profile.id).then(setEmailPreferencesState).catch((e) => setEmailPrefError(e.message || 'No se pudieron cargar preferencias.'));
-  }, [profile?.id, role]);
-
-  useEffect(() => {
     if (!isAdminRole(role)) return undefined;
     const channel = supabase
       .channel('admin-verification-queue')
@@ -239,37 +230,14 @@ export default function AdminDashboardScreen({ navigation }) {
       </View>
     ) : null}
     <View style={styles.top}><View><Text style={[styles.title, { color: colors.text }]}>Centro de control</Text><Text style={[styles.muted, { color: colors.muted }]}>Hola, {profile?.nickname || profile?.full_name || 'Administrador'}</Text></View><View style={styles.headerActions}><NotificationBell navigation={navigation} compact /><Pressable onPress={() => navigation.navigate('Profile')}><Text style={[styles.link, { color: colors.primary }]}>Mi perfil</Text></Pressable><Pressable onPress={() => navigation.navigate('Settings')}><Text style={[styles.link, { color: colors.primary }]}>Configuración</Text></Pressable><Pressable onPress={load}><Text style={[styles.link, { color: colors.primary }]}>Actualizar</Text></Pressable></View></View>
-    <View style={[styles.reviewCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <Text style={[styles.rowTitle, { color: colors.text }]}>Alertas por correo</Text>
-      <Text style={[styles.muted, { color: colors.muted }]}>Selecciona los avisos que quieres recibir. Remitente: istmiyanotificaciones@gmail.com · Soporte: istmiyasoporte@gmail.com.</Text>
-      {emailPrefError ? <Text accessibilityRole="alert" style={{ color: '#B42318' }}>{emailPrefError}</Text> : null}
-      {emailPrefSuccess ? <Text accessibilityRole="alert" style={{ color: '#146C43', marginTop: 8 }}>{emailPrefSuccess}</Text> : null}
-      <TextInput accessibilityLabel="Correo destinatario de alertas" autoCapitalize="none" keyboardType="email-address" placeholder="neildiazusb@gmail.com" value={emailPreferences.email} onChangeText={(email) => { setEmailPrefSuccess(''); setEmailPreferencesState((v) => ({ ...v, email })); }} style={[styles.replyInput, { backgroundColor: colors.input, color: colors.text, borderColor: colors.border }]} />
-      {[
-        ['profilePending', 'Perfiles pendientes de aprobación'],
-        ['inappropriateLanguage', 'Lenguaje inapropiado moderado en chat'],
-        ['financialException', 'Excepciones financieras y de retiro'],
-      ].map(([key, label]) => <Pressable key={key} accessibilityRole="checkbox" accessibilityState={{ checked: Boolean(emailPreferences[key]) }} onPress={() => { setEmailPrefSuccess(''); setEmailPreferencesState((v) => ({ ...v, [key]: !v[key] })); }}><Text style={{ color: colors.text, marginTop: 7 }}>{emailPreferences[key] ? '☑' : '☐'} {label}</Text></Pressable>)}
-      <Pressable accessibilityRole="button" disabled={savingEmailPref} onPress={async () => {
-        setSavingEmailPref(true); setEmailPrefError(''); setEmailPrefSuccess('');
-        try {
-          const email = emailPreferences.email.trim();
-          if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Ingresa un correo válido.');
-          await setEmailPreferences(profile.id, { ...emailPreferences, email });
-          setEmailPrefSuccess('Preferencias de correo guardadas.');
-        }
-        catch (e) { setEmailPrefError(e.message || 'No se pudo guardar.'); }
-        finally { setSavingEmailPref(false); }
-      }} style={[styles.emailSaveButton, { backgroundColor: colors.primary }, savingEmailPref && styles.emailSaveButtonDisabled]}>
-        <Text style={styles.emailSaveButtonText}>{savingEmailPref ? 'Guardando…' : 'Guardar preferencias de correo'}</Text>
-      </Pressable>
-    </View>
+    <AdminActivityBanner onPress={() => navigation.navigate('AdminActivity')} />
     <View style={styles.adminLinks}>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminFinance')}><Text style={[styles.link, { color: colors.primary }]}>Finanzas y retiros</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminActivity')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría en vivo</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminChatAudit')}><Text style={[styles.link, { color: colors.primary }]}>Auditoría de chats</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminUsers')}><Text style={[styles.link, { color: colors.primary }]}>Usuarios y perfiles</Text></Pressable>
       <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminControlReports')}><Text style={[styles.link, { color: colors.primary }]}>Control IstmiYa · informes</Text></Pressable>
+      <Pressable style={[styles.adminLink, { backgroundColor: colors.surface }]} onPress={() => navigation.navigate('AdminEmailPreferences')}><Text style={[styles.link, { color: colors.primary }]}>Preferencias de alertas por correo</Text></Pressable>
     </View>
     <HelpButton navigation={navigation} context="administración" compact />
     <Text style={[styles.subtitle, { color: colors.muted }]}>Indicadores acumulados de la plataforma</Text>
@@ -439,9 +407,6 @@ const styles = StyleSheet.create({
   headerActions: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
   adminLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginVertical: 12 },
   adminLink: { borderRadius: 10, padding: 8 },
-  emailSaveButton: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', borderRadius: 8, paddingHorizontal: 14, marginTop: 12 },
-  emailSaveButtonDisabled: { opacity: 0.65 },
-  emailSaveButtonText: { color: '#FFFFFF', fontWeight: '800' },
   title: { fontSize: 26, fontWeight: '800', color: '#1A237E' },
   subtitle: { color: '#687078', marginTop: 3, marginBottom: 16 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
