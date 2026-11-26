@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { PDFDocument, StandardFonts, rgb } from "https://esm.sh/pdf-lib@1.17.1";
+import { sendTransactionalEmail } from "../_shared/email.ts";
 
 const cors = {
   "access-control-allow-origin": "*",
@@ -11,7 +12,6 @@ const cors = {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: cors });
 const REPORT_REQUEST_BUDGET_MS = 120_000;
 const SUPABASE_FETCH_TIMEOUT_MS = 20_000;
-const GEMINI_FETCH_TIMEOUT_MS = 15_000;
 let requestDeadline = 0;
 
 async function fetchWithBudget(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = SUPABASE_FETCH_TIMEOUT_MS) {
@@ -72,6 +72,46 @@ Deno.serve(async (request) => {
     return json({ status: "ready", url: signed.signedUrl });
   }
 
+  if (action === "send_email") {
+    const jobId = validUuid(body.job_id);
+    const recipient = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    if (!jobId || !isValidEmail(recipient)) return json({ error: "invalid_report_email" }, 400);
+    const { data: report, error } = await db.from("admin_control_report_jobs")
+      .select("id,requested_by,report_kind,period_start,period_end,status,pdf_path,metrics,email_sent_at")
+      .eq("id", jobId).maybeSingle();
+    if (error || !report) return json({ error: "report_not_found" }, 404);
+    if (report.report_kind !== "daily" && report.requested_by !== adminId) return json({ error: "report_not_owned" }, 403);
+    if (report.status !== "ready" || !report.pdf_path) return json({ error: "report_not_available" }, 409);
+    if (report.email_sent_at) return json({ status: "sent", already_sent: true });
+    try {
+      const orders = (report.metrics as any)?.current?.orders || {};
+      await sendReportEmail(report as ReportJob & { pdf_path: string }, orders, recipient);
+      const { error: saveError } = await db.from("admin_control_report_jobs")
+        .update({ email_to: recipient, email_sent_at: new Date().toISOString(), email_error: null }).eq("id", jobId);
+      if (saveError) throw new Error("report_email_state_save_failed");
+      return json({ status: "sent", job_id: jobId });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "report_email_failed";
+      await db.from("admin_control_report_jobs").update({ email_to: recipient, email_error: code.slice(0, 120) }).eq("id", jobId);
+      return json({ status: "ready", job_id: jobId, email_error: code }, 502);
+    }
+  }
+
+  if (action === "retry_ai") {
+    const jobId = validUuid(body.job_id);
+    if (!jobId) return json({ error: "invalid_job_id" }, 400);
+    const { data: report, error } = await db.from("admin_control_report_jobs")
+      .select("id,requested_by,report_kind,period_start,period_end,status,pdf_path,metrics").eq("id", jobId).maybeSingle();
+    if (error || !report) return json({ error: "report_not_found" }, 404);
+    if (report.report_kind !== "daily" && report.requested_by !== adminId) return json({ error: "report_not_owned" }, 403);
+    if (report.status !== "ready" || !report.pdf_path || !report.metrics) return json({ error: "report_not_available" }, 409);
+    const { error: pendingError } = await db.from("admin_control_report_jobs")
+      .update({ error_code: "gemini_pending" }).eq("id", jobId);
+    if (pendingError) return json({ error: "report_ai_retry_state_failed" }, 500);
+    scheduleAIEnrichment(report as StoredReportJob);
+    return json({ status: "ai_processing", job_id: jobId }, 202);
+  }
+
   if (action !== "process") return json({ error: "unsupported_action" }, 400);
   const jobId = validUuid(body.job_id);
   if (!jobId) return json({ error: "invalid_job_id" }, 400);
@@ -107,37 +147,9 @@ async function processJob(db: ReturnType<typeof createClient>, jobId: string) {
     if (previousError) throw new Error("report_comparison_failed");
     console.info("control_report_stage_completed", job.id, "metrics_previous", Date.now() - previousMetricsStartedAt);
 
-    let aiSummary: string | null = null;
-    let aiError: string | null = null;
-    const geminiApiKey = Deno.env.get("GEMINI_API_KEY")?.trim();
-    const configuredModel = Deno.env.get("GEMINI_MODEL")?.trim();
-    const geminiModel = configuredModel?.replace(/^models\//i, "");
-    if (!geminiApiKey || !geminiModel) {
-      aiError = !geminiApiKey && !geminiModel
-        ? "gemini_secrets_missing"
-        : !geminiApiKey ? "gemini_api_key_missing" : "gemini_model_missing";
-    } else if (!/^[A-Za-z0-9._-]+$/.test(geminiModel)) {
-      aiError = "gemini_model_invalid";
-    } else {
-      console.info("control_report_stage_started", job.id, "gemini");
-      const geminiStartedAt = Date.now();
-      try {
-        aiSummary = await summarizeWithAI(metrics, previousMetrics, geminiApiKey, geminiModel);
-        console.info("control_report_stage_completed", job.id, "gemini", Date.now() - geminiStartedAt);
-      }
-      catch (error) {
-        aiError = error instanceof Error && /^gemini_http_\d+$/.test(error.message)
-          ? error.message
-          : error instanceof Error && error.message === "gemini_timeout"
-            ? "gemini_timeout"
-            : "gemini_request_failed";
-        console.warn("control_report_stage_failed", job.id, "gemini", aiError, Date.now() - geminiStartedAt);
-      }
-    }
-    if (aiError) console.warn("control_report_ai_unavailable", job.id, aiError);
     console.info("control_report_stage_started", job.id, "pdf_generation");
     const pdfStartedAt = Date.now();
-    const pdf = await createReportPdf(job, metrics, previousMetrics, aiSummary, aiError);
+    const pdf = await createReportPdf(job, metrics, previousMetrics, null, null);
     console.info("control_report_stage_completed", job.id, "pdf_generation", Date.now() - pdfStartedAt, pdf.length);
     const pdfPath = `${job.period_start}/${job.id}.pdf`;
     console.info("control_report_stage_started", job.id, "storage_upload");
@@ -149,10 +161,9 @@ async function processJob(db: ReturnType<typeof createClient>, jobId: string) {
     console.info("control_report_stage_completed", job.id, "storage_upload", Date.now() - uploadStartedAt);
 
     const update: Record<string, unknown> = {
-      status: "ready", metrics: { current: metrics, previous: previousMetrics }, ai_summary: aiSummary,
-      pdf_path: pdfPath, completed_at: new Date().toISOString(), error_code: null, email_error: null,
+      status: "ready", metrics: { current: metrics, previous: previousMetrics }, ai_summary: null,
+      pdf_path: pdfPath, completed_at: new Date().toISOString(), error_code: "gemini_pending", email_error: null,
     };
-    if (aiError) update.error_code = aiError;
     console.info("control_report_stage_started", job.id, "save_pdf_ready");
     const saveStartedAt = Date.now();
     const { error: saveError } = await db.from("admin_control_report_jobs").update(update).eq("id", job.id);
@@ -160,31 +171,14 @@ async function processJob(db: ReturnType<typeof createClient>, jobId: string) {
     reportReady = true;
     console.info("control_report_stage_completed", job.id, "save_pdf_ready", Date.now() - saveStartedAt);
 
-    let emailError: string | null = null;
-    if (job.email_requested) {
-      console.info("control_report_stage_started", job.id, "email_delivery");
-      const emailStartedAt = Date.now();
-      try {
-        const link = await db.storage.from("admin-control-reports").createSignedUrl(pdfPath, 24 * 60 * 60);
-        if (link.error || !link.data?.signedUrl) throw new Error("report_link_failed");
-        await sendReportEmail(job, metrics, link.data.signedUrl);
-        update.email_sent_at = new Date().toISOString();
-        update.email_error = null;
-      } catch (error) {
-        emailError = error instanceof Error ? error.message : "report_email_failed";
-      }
-      const emailUpdate = emailError
-        ? { email_error: emailError.slice(0, 120) }
-        : { email_sent_at: new Date().toISOString(), email_error: null };
-      const { error: emailSaveError } = await db.from("admin_control_report_jobs").update(emailUpdate).eq("id", job.id);
-      if (emailSaveError) console.error("control_report_email_state_write_failed", job.id);
-      console.info(emailError ? "control_report_stage_failed" : "control_report_stage_completed", job.id, "email_delivery", Date.now() - emailStartedAt, emailError || "sent");
-    }
+    await notifyReportReadyInApp(db, job);
+    scheduleAIEnrichment({ ...job, pdf_path: pdfPath, metrics: { current: metrics, previous: previousMetrics } });
+    if (job.report_kind === "daily" && job.email_requested) scheduleDailyReportEmail(job, metrics, pdfPath);
     console.info("control_report_stage_started", job.id, "signed_url");
     const signed = await db.storage.from("admin-control-reports").createSignedUrl(pdfPath, 60 * 60);
     if (signed.error) console.warn("control_report_signed_url_failed", job.id);
     else console.info("control_report_stage_completed", job.id, "signed_url");
-    return json({ status: "ready", job_id: job.id, url: signed.data?.signedUrl || null, email_error: emailError, ai_error: aiError });
+    return json({ status: "ready", job_id: job.id, url: signed.data?.signedUrl || null, ai_pending: true });
   } catch (error) {
     const code = error instanceof Error ? error.message : "report_processing_failed";
     if (reportReady) {
@@ -200,27 +194,132 @@ async function processJob(db: ReturnType<typeof createClient>, jobId: string) {
   }
 }
 
+async function notifyReportReadyInApp(db: ReturnType<typeof createClient>, job: ReportJob) {
+  try {
+    let recipients: string[] = [];
+    if (job.requested_by) recipients = [job.requested_by];
+    else {
+      const { data, error } = await db.from("profiles").select("id").in("role", ["admin", "superadmin"]).eq("status", "activo");
+      if (error) throw error;
+      recipients = (data || []).map((profile: { id: string }) => profile.id);
+    }
+    if (!recipients.length) return;
+    const rows = recipients.map((recipientId) => ({
+      recipient_id: recipientId,
+      event_key: "control_report_ready",
+      title: "Informe Control IstmiYa listo",
+      body: "El PDF del periodo solicitado ya está disponible en el panel de Control IstmiYa.",
+      idempotency_key: "control-report:" + job.id + ":admin:" + recipientId,
+    }));
+    const { error } = await db.from("user_notifications").upsert(rows, { onConflict: "idempotency_key", ignoreDuplicates: true });
+    if (error) throw error;
+  } catch (error) {
+    console.warn("control_report_in_app_notification_failed", job.id, error instanceof Error ? error.message : "unknown");
+  }
+}
+
+function scheduleBackground(task: Promise<unknown>, name: string) {
+  const runtime = (globalThis as typeof globalThis & { EdgeRuntime?: { waitUntil: (promise: Promise<unknown>) => void } }).EdgeRuntime;
+  const safeTask = task.catch((error) => console.error(name, error instanceof Error ? error.message : "unknown"));
+  if (runtime?.waitUntil) runtime.waitUntil(safeTask);
+  else void safeTask;
+}
+
+type StoredReportJob = ReportJob & { pdf_path: string; metrics: { current: any; previous: any } };
+
+function scheduleAIEnrichment(job: StoredReportJob) {
+  const backgroundDb = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    { auth: { persistSession: false } },
+  );
+  scheduleBackground((async () => {
+    const startedAt = Date.now();
+    try {
+      const apiKey = Deno.env.get("GEMINI_API_KEY")?.trim();
+      const configuredModel = Deno.env.get("GEMINI_MODEL")?.trim();
+      const model = configuredModel?.replace(/^models\//i, "");
+      if (!apiKey || !model) throw new Error(!apiKey ? "gemini_api_key_missing" : "gemini_model_missing");
+      if (!/^[A-Za-z0-9._-]+$/.test(model)) throw new Error("gemini_model_invalid");
+      console.info("control_report_stage_started", job.id, "gemini_background");
+      const summary = await summarizeWithAI(job.metrics.current, job.metrics.previous, apiKey, model);
+      const pdf = await createReportPdf(job, job.metrics.current, job.metrics.previous, summary, null);
+      const { error: uploadError } = await backgroundDb.storage.from("admin-control-reports").upload(job.pdf_path, pdf, {
+        contentType: "application/pdf", upsert: true, cacheControl: "3600",
+      });
+      if (uploadError) throw new Error("report_ai_pdf_update_failed");
+      const { error } = await backgroundDb.from("admin_control_report_jobs")
+        .update({ ai_summary: summary, error_code: null }).eq("id", job.id).eq("status", "ready");
+      if (error) throw new Error("report_ai_state_save_failed");
+      console.info("control_report_stage_completed", job.id, "gemini_background", Date.now() - startedAt);
+    } catch (error) {
+      const code = error instanceof Error && (/^gemini_/.test(error.message) || error.message === "report_ai_pdf_update_failed" || error.message === "report_ai_state_save_failed")
+        ? error.message : "gemini_request_failed";
+      try {
+        const fallbackPdf = await createReportPdf(job, job.metrics.current, job.metrics.previous, null, code);
+        await backgroundDb.storage.from("admin-control-reports").upload(job.pdf_path, fallbackPdf, {
+          contentType: "application/pdf", upsert: true, cacheControl: "3600",
+        });
+      } catch (fallbackError) {
+        console.warn("control_report_fallback_pdf_update_failed", job.id, fallbackError instanceof Error ? fallbackError.message : "unknown");
+      }
+      await backgroundDb.from("admin_control_report_jobs").update({ error_code: code }).eq("id", job.id).eq("status", "ready");
+      console.warn("control_report_stage_failed", job.id, "gemini_background", code, Date.now() - startedAt);
+    }
+  })(), "control_report_ai_background_failed");
+}
+
+function scheduleDailyReportEmail(job: ReportJob, metrics: any, pdfPath: string) {
+  const backgroundDb = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    { auth: { persistSession: false } },
+  );
+  scheduleBackground((async () => {
+    try {
+      await sendReportEmail({ ...job, pdf_path: pdfPath }, metrics?.orders || {}, job.email_to || Deno.env.get("ADMIN_ALERT_EMAIL") || "");
+      await backgroundDb.from("admin_control_report_jobs").update({ email_sent_at: new Date().toISOString(), email_error: null }).eq("id", job.id);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "report_email_failed";
+      await backgroundDb.from("admin_control_report_jobs").update({ email_error: code.slice(0, 120) }).eq("id", job.id);
+      console.warn("control_report_stage_failed", job.id, "email_delivery_background", code);
+    }
+  })(), "control_report_daily_email_background_failed");
+}
+
 async function summarizeWithAI(current: unknown, previous: unknown, key: string, model: string): Promise<string> {
   let response: Response;
-  try {
-    response = await fetchWithBudget(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: "POST",
-      headers: { "x-goog-api-key": key, "content-type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: "Eres el analista interno de IstmiYa. Redacta en español un resumen ejecutivo para el administrador, destaca cambios relevantes y anomalías a revisar. Los valores ya fueron calculados por PostgreSQL: no recalcules ni inventes cifras. Aclara cuando un dato no está registrado y no llames utilidad a la liquidación neta." }],
-        },
-        contents: [{
-          role: "user",
-          parts: [{ text: JSON.stringify({ periodo_actual: aggregateForAI(current), periodo_anterior: aggregateForAI(previous) }) }],
-        }],
-        generationConfig: { maxOutputTokens: 700 },
-      }),
-    }, GEMINI_FETCH_TIMEOUT_MS);
-  } catch (error) {
-    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new Error("gemini_timeout");
-    throw new Error("gemini_request_failed");
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const requestBody = JSON.stringify({
+    systemInstruction: {
+      parts: [{ text: "Eres el analista interno de IstmiYa. Redacta en español un resumen ejecutivo para el administrador, destaca cambios relevantes y anomalías a revisar. Los valores ya fueron calculados por PostgreSQL: no recalcules ni inventes cifras. Aclara cuando un dato no está registrado y no llames utilidad a la liquidación neta." }],
+    },
+    contents: [{
+      role: "user",
+      parts: [{ text: JSON.stringify({ periodo_actual: aggregateForAI(current), periodo_anterior: aggregateForAI(previous) }) }],
+    }],
+    generationConfig: { maxOutputTokens: 700 },
+  });
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "x-goog-api-key": key, "content-type": "application/json" },
+        body: requestBody,
+        signal: AbortSignal.timeout(12_000),
+      });
+    } catch (error) {
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new Error("gemini_timeout");
+      throw new Error("gemini_request_failed");
+    }
+
+    if (response.status !== 503 || attempt === 3) break;
+    const backoffMs = [2_000, 5_000, 12_000][attempt];
+    console.warn("control_report_gemini_retry", attempt + 1, response.status, backoffMs);
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
   }
+
   const data = await response.json();
   if (!response.ok) throw new Error(`gemini_http_${response.status}`);
   const output = (data.candidates || [])
@@ -258,30 +357,33 @@ function aggregateForAI(value: any) {
   };
 }
 
-async function sendReportEmail(job: ReportJob, metrics: any, signedUrl: string) {
-  const relay = Deno.env.get("SMTP_RELAY_URL");
-  const secret = Deno.env.get("SMTP_RELAY_SECRET");
-  const fallbackTo = Deno.env.get("ADMIN_ALERT_EMAIL");
-  const recipient = job.email_to || fallbackTo;
-  if (!relay || !secret || !recipient) throw new Error("report_email_not_configured");
-  const allowlist = new Set([fallbackTo, ...(Deno.env.get("ADMIN_ALERT_EMAIL_ALLOWLIST") || "").split(",").map((value) => value.trim())].filter(Boolean));
-  if (!allowlist.has(recipient)) throw new Error("report_email_recipient_not_allowlisted");
-  const orders = metrics?.orders || {};
-  let response: Response;
-  try {
-    response = await fetchWithBudget(relay, {
-      method: "POST", headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        to: recipient,
-        subject: `IstmiYa · Informe ${job.period_start} a ${job.period_end}`,
-        text: `El informe Control IstmiYa está listo.\n\nPedidos: ${orders.total ?? 0}\nVentas brutas registradas: ${cop(orders.gross_cop)}\n\nDescarga PDF (enlace válido por 24 horas): ${signedUrl}\n\nSoporte: ${Deno.env.get("SUPPORT_EMAIL") || "istmiyasoporte@gmail.com"}`,
-      }),
-    }, 15_000);
-  } catch (error) {
-    if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) throw new Error("report_relay_timeout");
-    throw new Error("report_relay_unreachable");
-  }
-  if (!response.ok) throw new Error(`report_relay_http_${response.status}`);
+async function sendReportEmail(job: ReportJob & { pdf_path: string }, orders: any, recipient: string) {
+  const fallbackTo = Deno.env.get("ADMIN_ALERT_EMAIL")?.trim().toLowerCase();
+  const allowlist = new Set([fallbackTo, ...(Deno.env.get("ADMIN_ALERT_EMAIL_ALLOWLIST") || "").split(",").map((value) => value.trim().toLowerCase())].filter(Boolean));
+  if (!recipient) throw new Error("report_email_not_configured");
+  if (!allowlist.has(recipient.toLowerCase())) throw new Error("report_email_recipient_not_allowlisted");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!supabaseUrl || !serviceKey) throw new Error("server_not_configured");
+  const link = await createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } })
+    .storage.from("admin-control-reports").createSignedUrl(job.pdf_path, 24 * 60 * 60);
+  if (link.error || !link.data?.signedUrl) throw new Error("report_link_failed");
+  const signedUrl = link.data.signedUrl;
+  const subject = "IstmiYa - Informe " + job.period_start + " a " + job.period_end;
+  const text = "El informe Control IstmiYa está listo.\n\nPedidos: " + (orders.total ?? 0)
+    + "\nVentas brutas registradas: " + cop(orders.gross_cop)
+    + "\n\nDescarga PDF (enlace válido por 24 horas): " + signedUrl
+    + "\n\nSoporte: " + (Deno.env.get("SUPPORT_EMAIL") || "istmiyasoporte@gmail.com");
+  const html = '<div style="font-family:Arial,sans-serif;color:#172033;max-width:600px;margin:auto"><h2 style="color:#e87518">Informe Control IstmiYa</h2><p>El informe del '
+    + job.period_start + " al " + job.period_end + ' está listo.</p><p><b>Pedidos:</b> ' + (orders.total ?? 0)
+    + "<br/><b>Ventas brutas registradas:</b> " + cop(orders.gross_cop)
+    + '</p><p><a href="' + signedUrl + '" style="display:inline-block;background:#f58216;color:white;padding:12px 18px;border-radius:8px;text-decoration:none;font-weight:bold">Descargar informe PDF</a></p><p>El enlace vence en 24 horas.</p><small>Soporte: '
+    + (Deno.env.get("SUPPORT_EMAIL") || "istmiyasoporte@gmail.com") + "</small></div>";
+  await sendTransactionalEmail({ to: recipient, subject, text, html, idempotencyKey: "control-report/" + job.id });
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 async function createReportPdf(job: ReportJob, current: any, previous: any, summary: string | null, aiError: string | null) {
@@ -327,7 +429,7 @@ async function createReportPdf(job: ReportJob, current: any, previous: any, summ
   });
   y = 422;
   section("Resumen ejecutivo");
-  draw(summary || "Resumen IA no disponible. Las cifras y alertas del PDF se calcularon en PostgreSQL.", { size: 10 });
+  draw(summary || "La síntesis ejecutiva se está preparando. Las cifras y alertas de este informe se calcularon en PostgreSQL.", { size: 10 });
   if (aiError) draw("Estado de IA: resumen no disponible; el informe determinístico se generó correctamente.", { size: 9, color: rgb(0.67,0.18,0.12) });
   section("Comparación con el periodo anterior");
   draw(`Pedidos: ${pOrders} vs. ${Number(previous?.orders?.total || 0)} · Ventas brutas: ${cop(pGross)} vs. ${cop(previous?.orders?.gross_cop || 0)}`);

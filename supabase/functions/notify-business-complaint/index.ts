@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sendTransactionalEmail } from "../_shared/email.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -25,10 +26,6 @@ serve(async (request) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const resendApiKey = Deno.env.get("RESEND_API_KEY");
-    const fromEmail = Deno.env.get("RESEND_FROM_EMAIL");
-    const smtpRelayUrl = Deno.env.get("SMTP_RELAY_URL");
-    const smtpRelaySecret = Deno.env.get("SMTP_RELAY_SECRET");
     const authorization = request.headers.get("Authorization");
     if (!supabaseUrl || !anonKey || !serviceRoleKey || !authorization) {
       return jsonResponse({ error: "Complaint notification service is not configured" }, 503);
@@ -85,10 +82,22 @@ serve(async (request) => {
     if (!recipient) {
       return jsonResponse({ error: "No complaint inbox is configured" }, 503);
     }
-    if (!smtpRelayUrl || !smtpRelaySecret) {
-      return jsonResponse({ error: "Support SMTP relay is not configured" }, 503);
+    const { data: admins, error: adminLookupError } = await admin.from("profiles")
+      .select("id").in("role", ["admin", "superadmin"]).eq("status", "activo");
+    if (adminLookupError) throw new Error("Admin notification recipients could not be loaded");
+    if (admins?.length) {
+      const { error: notificationError } = await admin.from("user_notifications").upsert(
+        admins.map((profile: { id: string }) => ({
+          recipient_id: profile.id,
+          event_key: "support_ticket_received",
+          title: "Nueva solicitud de soporte",
+          body: "Llegó una queja o solicitud desde la app. Abre el panel para revisar el caso.",
+          idempotency_key: "support-ticket:" + ticket.id + ":admin:" + profile.id,
+        })),
+        { onConflict: "idempotency_key", ignoreDuplicates: true },
+      );
+      if (notificationError) throw new Error("Admin in-app notification could not be saved");
     }
-
     const body = [
       `Hola ${businessName},`,
       "",
@@ -101,35 +110,23 @@ serve(async (request) => {
       "",
       `Referencia del caso: ${ticket.id}`,
     ].join("\n");
-    const deliveries: Promise<Response>[] = [fetch(smtpRelayUrl, {
-      method: "POST",
-      headers: { authorization: `Bearer ${smtpRelaySecret}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        to: supportEmail,
+    const deliveries: Promise<void>[] = [sendTransactionalEmail({
+      to: supportEmail,
+      subject: `Queja recibida en IstmiYa: ${ticket.subject}`,
+      text: body,
+      idempotencyKey: `support-ticket/${ticket.id}/support`,
+    })];
+    if (recipient !== supportEmail) {
+      deliveries.push(sendTransactionalEmail({
+        to: recipient,
         subject: `Queja recibida en IstmiYa: ${ticket.subject}`,
         text: body,
-      }),
-    })];
-    let businessNotificationMissingConfig = false;
-    if (recipient !== supportEmail) {
-      if (!resendApiKey || !fromEmail) {
-        businessNotificationMissingConfig = true;
-      } else {
-        deliveries.push(fetch("https://api.resend.com/emails", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${resendApiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            from: fromEmail,
-            to: [recipient],
-            subject: `Queja recibida en IstmiYa: ${ticket.subject}`,
-            text: body,
-          }),
-        }));
-      }
+        idempotencyKey: `support-ticket/${ticket.id}/business`,
+      }));
     }
-    const responses = await Promise.all(deliveries);
-    if (businessNotificationMissingConfig || responses.some((response) => !response.ok)) {
-      console.error("Complaint email delivery failed", responses.map((response) => response.status));
+    const outcomes = await Promise.allSettled(deliveries);
+    if (outcomes.some((outcome) => outcome.status === "rejected")) {
+      console.error("Complaint email delivery failed", outcomes.map((outcome) => outcome.status === "rejected" ? outcome.reason?.message : "sent"));
       return jsonResponse({ error: "The complaint was saved, but one or more email notifications failed" }, 502);
     }
 

@@ -2,20 +2,37 @@ import { supabase } from '../api/supabaseClient';
 
 export async function listControlReports(limit = 30) {
   const { data, error } = await supabase.from('admin_control_report_jobs')
-    .select('id,report_kind,period_start,period_end,status,email_requested,email_sent_at,email_error,ai_summary,error_code,created_at,completed_at')
+    .select('id,report_kind,period_start,period_end,status,email_requested,email_to,email_sent_at,email_error,ai_summary,error_code,created_at,completed_at')
     .order('created_at', { ascending: false }).limit(limit);
   if (error) throw error;
   return data || [];
 }
 
-export async function requestControlReport({ start, end, emailRequested, email }) {
+export async function requestControlReport({ start, end }) {
   const { data: jobId, error } = await supabase.rpc('admin_enqueue_control_report', {
-    p_period_start: start, p_period_end: end, p_email_requested: Boolean(emailRequested), p_email_to: email || null,
+    p_period_start: start, p_period_end: end, p_email_requested: false, p_email_to: null,
   });
   if (error) throw error;
   if (!jobId) throw new Error('No se pudo poner el informe en cola.');
   const result = await processControlReport(jobId);
   return { jobId, result };
+}
+
+export async function sendControlReportEmail(jobId, email) {
+  const { data, error } = await supabase.functions.invoke('control-istmiya-reports', {
+    body: { action: 'send_email', job_id: jobId, email },
+  });
+  if (error) throw error;
+  if (data?.email_error) throw new Error(data.email_error);
+  return data;
+}
+
+export async function retryControlReportAI(jobId) {
+  const { data, error } = await supabase.functions.invoke('control-istmiya-reports', {
+    body: { action: 'retry_ai', job_id: jobId },
+  });
+  if (error) throw error;
+  return data;
 }
 
 export async function processControlReport(jobId) {

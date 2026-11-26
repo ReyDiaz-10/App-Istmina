@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { sendTransactionalEmail } from "../_shared/email.ts";
 
 const json = (body: unknown, status=200) => new Response(JSON.stringify(body), { status, headers: { "content-type":"application/json", "cache-control":"no-store" } });
 Deno.serve(async (req) => {
@@ -6,8 +7,7 @@ Deno.serve(async (req) => {
   const secret=Deno.env.get("NOTIFICATION_DISPATCH_SECRET");
   if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) return json({ error:"unauthorized" },401);
   const url=Deno.env.get("SUPABASE_URL"); const key=Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const relay=Deno.env.get("SMTP_RELAY_URL"); const relaySecret=Deno.env.get("SMTP_RELAY_SECRET");
-  if (!url || !key || !relay || !relaySecret) return json({ error:"smtp_relay_not_configured" },503);
+  if (!url || !key) return json({ error:"server_not_configured" },503);
   const { notification_id }=await req.json();
   if (typeof notification_id!=="string" || !/^[0-9a-f-]{36}$/i.test(notification_id)) return json({ error:"invalid_notification_id" },400);
   const db=createClient(url,key,{auth:{persistSession:false}});
@@ -22,10 +22,12 @@ Deno.serve(async (req) => {
   const email=authData?.user?.email;
   if (authError || !email) return json({ error:"admin_email_unavailable" },409);
   try {
-    const response=await fetch(relay,{method:"POST",headers:{"content-type":"application/json","authorization":`Bearer ${relaySecret}`},body:JSON.stringify({
-      to:pref?.admin_alert_email || Deno.env.get('ADMIN_ALERT_EMAIL') || email,subject:`IstmiYa: ${row.title}`,text:`${row.body}\n\nAbre el panel administrativo de IstmiYa para revisar el aviso.\n\nSoporte: ${Deno.env.get("SUPPORT_EMAIL") || "istmiyasoporte@gmail.com"}`,
-    })});
-    if (!response.ok) throw new Error(`smtp_relay_http_${response.status}`);
+    await sendTransactionalEmail({
+      to:pref?.admin_alert_email || Deno.env.get('ADMIN_ALERT_EMAIL') || email,
+      subject:`IstmiYa: ${row.title}`,
+      text:`${row.body}\n\nAbre el panel administrativo de IstmiYa para revisar el aviso.\n\nSoporte: ${Deno.env.get("SUPPORT_EMAIL") || "istmiyasoporte@gmail.com"}`,
+      idempotencyKey:`notification/${row.id}`,
+    });
     const {error:updateError}=await db.rpc('release_notification_batch',{p_id:row.id,p_channel:'email',p_attempts:row.attempts+1,p_error:'',p_delay_seconds:60,p_sent:true});
     if (updateError) throw new Error("email_delivery_record_failed");
     return json({ok:true});
