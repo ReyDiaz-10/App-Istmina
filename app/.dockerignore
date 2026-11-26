@@ -1,0 +1,10 @@
+.git
+node_modules
+.expo
+dist
+dist-local
+android
+ios
+.env
+.env.*
+*.apk
