@@ -1,0 +1,55 @@
+name: Quality checks
+
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: App lint, types, tests and web export
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install locked app dependencies
+        run: npm ci
+        working-directory: app
+
+      - name: Run lint
+        run: npm run lint
+        working-directory: app
+
+      - name: Type check
+        if: always()
+        run: npx tsc --noEmit
+        working-directory: app
+
+      - name: Run unit tests
+        if: always()
+        run: npm test
+        working-directory: app
+
+      - name: Export web bundle
+        if: always()
+        run: npm run build:web
+        working-directory: app
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-public-anon-key
