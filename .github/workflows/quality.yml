@@ -39,14 +39,17 @@ jobs:
         working-directory: app
 
       - name: Type check
+        if: always()
         run: npx tsc --noEmit
         working-directory: app
 
       - name: Run unit tests
+        if: always()
         run: npm test
         working-directory: app
 
       - name: Export web bundle
+        if: always()
         run: npm run build:web
         working-directory: app
         env:
